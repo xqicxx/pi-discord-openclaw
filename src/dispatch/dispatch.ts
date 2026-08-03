@@ -13,10 +13,10 @@
 //   2. DraftLaneState：stream / lastPartialText / hasStreamedMessage / finalized
 //   3. 投递结果：preview-finalized / sent / skipped
 
-import { DraftStream, type DraftTransport } from "../draft/draft-stream.js";
-import { ReasoningLane } from "../reasoning/reasoning-lane.js";
-import { ProgressLane } from "../progress/progress-lane.js";
-import { InboundDebouncer } from "../inbound/debounce.js";
+import { DraftStream, type DraftTransport } from "../draft/draft-stream.ts";
+import { ReasoningLane } from "../reasoning/reasoning-lane.ts";
+import { ProgressLane } from "../progress/progress-lane.ts";
+import { InboundDebouncer } from "../inbound/debounce.ts";
 
 export type StreamMode = "progress" | "partial" | "full";
 

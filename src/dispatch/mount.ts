@@ -2,8 +2,8 @@
 // 解耦：不修改 lib/ 内部，只在 index.ts 调用 mountOpenclawBridge(activityRuntime, deps)。
 // 开关：telegram.json 的 openclawStyle.enabled（默认 false，保持上游行为）。
 
-import { OpenclawBridge, type TelegramDelivery } from "./dispatch.js";
-import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activity-adapter.js";
+import { OpenclawBridge, type TelegramDelivery } from "./dispatch.ts";
+import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activity-adapter.ts";
 
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
 export interface MountDeps {

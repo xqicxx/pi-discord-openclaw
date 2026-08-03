@@ -48,6 +48,8 @@ import * as Threads from "./lib/threads.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
 import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
+import { mountOpenclawBridge } from "./src/dispatch/mount.ts";
+import { createTelegramMountDeps } from "./src/dispatch/telegram-api-adapter.ts";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 
@@ -536,6 +538,21 @@ export default function (pi: Pi.ExtensionAPI) {
       });
     },
   });
+  // --- OpenClaw-style streaming (optional) ---
+  const openclawStyleCfg = (configStore.get() as {
+    openclawStyle?: { enabled?: boolean };
+  }).openclawStyle;
+  if (openclawStyleCfg?.enabled) {
+    mountOpenclawBridge(activityRuntime, createTelegramMountDeps(
+      {
+        sendMessage,
+        editMessageText: editTelegramMessageText,
+        deleteMessage: deleteTelegramMessage,
+        sendChatAction: (chatId) => sendChatAction(chatId, "typing"),
+      },
+      () => activeTurnRuntime.getChatId() ?? proactivePushChatIdGetter() ?? undefined,
+    ));
+  }
   const dispatchNextQueuedTelegramTurn =
     Queue.createTelegramQueueDispatchRuntime({
       ...telegramQueueStore,

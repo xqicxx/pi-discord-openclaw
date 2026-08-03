@@ -6,7 +6,7 @@
 //   thinking_start / thinking_delta / thinking_end /
 //   toolcall_start / toolcall_delta / toolcall_end / done / error
 
-import type { OpenclawActivityEvent } from "./dispatch.js";
+import type { OpenclawActivityEvent } from "./dispatch.ts";
 
 export type TelegramAssistantStreamEvent =
   | { type: "start" }

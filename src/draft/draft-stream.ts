@@ -9,7 +9,7 @@
 //   5. 失败重试：MAX_CONSECUTIVE_FAILURES 内重试
 //   6. flood 退避：读 retry_after，最长挂起 60s
 
-import { splitChunks } from "../lanes/lane.js";
+import { splitChunks } from "../lanes/lane.ts";
 
 const DEFAULT_THROTTLE_MS = 1000;
 const MIN_THROTTLE_MS = 250;

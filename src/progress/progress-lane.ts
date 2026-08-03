@@ -9,7 +9,7 @@
 //   - 行结构：{ id, kind, text, label, status, icon }
 //   - removeChannelProgressDraftLine(lines, id) — 按 id 增量更新
 
-import type { DraftStream, DraftPreview } from "../draft/draft-stream.js";
+import type { DraftStream, DraftPreview } from "../draft/draft-stream.ts";
 
 /** 笔记 06: 进度行结构。 */
 export interface ProgressLine {

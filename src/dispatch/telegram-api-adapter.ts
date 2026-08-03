@@ -2,7 +2,7 @@
 // mount 需要的 MountDeps（签名不同：上游带 chatId/body，mount 只需 text/messageId）。
 // 解耦：index.ts 只传上游 API + getChatId，不关心内部适配。
 
-import type { MountDeps } from "./mount.js";
+import type { MountDeps } from "./mount.ts";
 
 /** 上游 API 的最小面（index.ts 传入）。 */
 export interface TelegramApiSurface {

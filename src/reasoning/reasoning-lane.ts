@@ -9,7 +9,7 @@
 //   4. isPartialReasoningTagPrefix(text) — 未闭合标签前缀判断
 //   5. createTelegramReasoningStepState() — 思考步骤状态机
 
-import type { DraftStream } from "../draft/draft-stream.js";
+import type { DraftStream } from "../draft/draft-stream.ts";
 
 const REASONING_MESSAGE_RE = /^🧠\s+_/u;
 const CORE_THINKING_HEADER_RE = /^Thinking\.{0,3}\s*\n+/u;

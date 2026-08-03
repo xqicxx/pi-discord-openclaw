@@ -4,11 +4,11 @@
 //            progress-draft-preview.ts, bot-handlers.inbound-debounce.runtime.ts)
 
 import type { ExtensionAPI } from "@earendil-works/pi-agent-core";
-import { DraftStreamManager } from "./draft/draft-stream.js";
-import { ReasoningLane } from "./reasoning/reasoning-lane.js";
-import { ProgressLane } from "./progress/progress-lane.js";
-import { InboundDebouncer } from "./inbound/debounce.js";
-import { loadOpenclawStyleConfig, type OpenclawStyleConfig } from "./config.js";
+import { DraftStreamManager } from "./draft/draft-stream.ts";
+import { ReasoningLane } from "./reasoning/reasoning-lane.ts";
+import { ProgressLane } from "./progress/progress-lane.ts";
+import { InboundDebouncer } from "./inbound/debounce.ts";
+import { loadOpenclawStyleConfig, type OpenclawStyleConfig } from "./config.ts";
 
 const TAG = "[pi-telegram-openclaw]";
 
