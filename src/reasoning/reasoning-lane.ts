@@ -9,6 +9,8 @@
 //   4. isPartialReasoningTagPrefix(text) — 未闭合标签前缀判断
 //   5. createTelegramReasoningStepState() — 思考步骤状态机
 
+import type { DraftStream } from "../draft/draft-stream.js";
+
 const REASONING_MESSAGE_RE = /^🧠\s+_/u;
 const CORE_THINKING_HEADER_RE = /^Thinking\.{0,3}\s*\n+/u;
 const LEGACY_REASONING_MESSAGE_PREFIX = "Reasoning:\n";
@@ -119,4 +121,50 @@ export function renderReasoningText(text: string, style: "emoji-italic" | "itali
   const trimmed = text.trim().replaceAll("_", "\\_");
   if (style === "emoji-italic") return `🧠 _${trimmed}_`;
   return `_${trimmed}_`;
+}
+
+/**
+ * ReasoningLane 类包装（F5 dispatch 使用）：复用上面的纯函数实现。
+ * 通过 DraftStream 的 updatePreview 渲染 🧠 思考消息。
+ */
+export class ReasoningLane {
+  private opts: { enabled: boolean; style: "emoji-italic" | "italic" | "hidden" };
+  private draft?: DraftStream;
+  private accumulated = "";
+
+  constructor(
+    opts: { enabled: boolean; style: "emoji-italic" | "italic" | "hidden" },
+    _drafts: unknown,
+  ) {
+    this.opts = opts;
+  }
+
+  bindDraft(draft: DraftStream): void {
+    this.draft = draft;
+  }
+
+  beginTurn(): void {
+    this.accumulated = "";
+  }
+
+  onDelta(delta: string): void {
+    if (!this.opts.enabled || this.opts.style === "hidden") return;
+    this.accumulated += delta;
+    const split = splitTelegramReasoningText(this.accumulated, true);
+    if (split.reasoningText) {
+      this.draft?.updatePreview({ text: split.reasoningText, parseMode: "HTML" });
+    }
+  }
+
+  finalize(): void {
+    if (!this.opts.enabled) return;
+    const split = splitTelegramReasoningText(this.accumulated, true);
+    if (split.reasoningText) {
+      this.draft?.updatePreview({ text: split.reasoningText, parseMode: "HTML" });
+    }
+  }
+
+  endTurn(): void {
+    this.accumulated = "";
+  }
 }
