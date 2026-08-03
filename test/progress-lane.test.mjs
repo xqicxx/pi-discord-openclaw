@@ -44,7 +44,7 @@ function assert(cond, label) {
 
 // 4. 截断
 {
-  assert(clipTelegramProgressText('a'.repeat(200)).length === 80, '超长截断到 80');
+  assert(clipTelegramProgressText("a".repeat(400)).length === 300, "超长截断到 300");
   assert(formatTelegramProgressLine('_italic_') === '_italic_', '斜体原样');
   assert(formatTelegramProgressLine('plain').startsWith('`'), '普通文本 → 代码块');
 }
