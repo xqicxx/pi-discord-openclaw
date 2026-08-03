@@ -1,22 +1,79 @@
 {
   "name": "pi-telegram-openclaw",
   "version": "0.1.0",
-  "description": "OpenClaw-style streaming (reasoning 🧠 / tool progress 🔧 / typed replies 📝 / follow-up ⏭️) for pi Telegram bridge",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "Fork of @llblab/pi-telegram with OpenClaw-style streaming (reasoning/tool-progress/typed replies/follow-up)",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "telegram",
+    "bot",
+    "extension"
+  ],
   "type": "module",
-  "main": "src/index.ts",
-  "files": ["src"],
-  "scripts": {
-    "build": "tsc",
-    "test": "node --test src/**/*.test.ts"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-agent-core": ">=0.80.6",
-    "@earendil-works/pi-coding-agent": ">=0.80.6"
-  },
-  "keywords": ["pi", "telegram", "openclaw", "streaming", "reasoning"],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/xqicxx/pi-telegram-openclaw"
+    "url": "https://github.com/xqicxx/pi-telegram-openclaw.git"
+  },
+  "homepage": "https://github.com/llblab/pi-telegram",
+  "bugs": {
+    "url": "https://github.com/llblab/pi-telegram/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test --test-reporter=dot tests/*.test.ts",
+    "test:verbose": "node --experimental-strip-types --test --test-reporter=spec tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "audit": "npm audit --omit=peer",
+    "audit:host": "npm audit",
+    "pack:check": "npm pack --dry-run",
+    "validate": "npm run typecheck && npm test && npm run audit && npm run pack:check"
+  },
+  "files": [
+    "index.ts",
+    "api/",
+    "lib/",
+    "README.md",
+    "AGENTS.md",
+    "BACKLOG.md",
+    "CHANGELOG.md",
+    "docs/",
+    "scripts/",
+    "screenshot.png"
+  ],
+  "exports": {
+    ".": "./index.ts",
+    "./inbound": "./api/inbound.ts",
+    "./outbound": "./api/outbound.ts",
+    "./delivery": "./api/delivery.ts",
+    "./activity": "./api/activity.ts",
+    "./updates": "./api/updates.ts",
+    "./commands": "./api/commands.ts",
+    "./sections": "./api/sections.ts",
+    "./status": "./api/status.ts",
+    "./voice": "./api/voice.ts",
+    "./keyboard": "./api/keyboard.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "image": "https://github.com/llblab/pi-telegram/raw/main/screenshot.png"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.80.6",
+    "@earendil-works/pi-ai": ">=0.80.6",
+    "@earendil-works/pi-coding-agent": ">=0.80.6",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
   }
 }
