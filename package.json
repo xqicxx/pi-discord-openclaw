@@ -1,0 +1,22 @@
+{
+  "name": "pi-telegram-openclaw",
+  "version": "0.1.0",
+  "description": "OpenClaw-style streaming (reasoning 🧠 / tool progress 🔧 / typed replies 📝 / follow-up ⏭️) for pi Telegram bridge",
+  "type": "module",
+  "main": "src/index.ts",
+  "files": ["src"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test src/**/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.80.6",
+    "@earendil-works/pi-coding-agent": ">=0.80.6"
+  },
+  "keywords": ["pi", "telegram", "openclaw", "streaming", "reasoning"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xqicxx/pi-telegram-openclaw"
+  }
+}
