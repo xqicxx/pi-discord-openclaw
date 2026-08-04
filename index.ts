@@ -539,9 +539,16 @@ export default function (pi: Pi.ExtensionAPI) {
     },
   });
   // --- OpenClaw-style streaming (optional) ---
-  const openclawStyleCfg = (configStore.get() as {
-    openclawStyle?: { enabled?: boolean };
-  }).openclawStyle;
+  // 直接读 telegram.json（configStore.get() 只返回 TelegramConfig 接口字段，openclawStyle 会被丢弃）
+  const openclawStyleCfg = (() => {
+    try {
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const cfgPath = path.join(process.env.PI_CODING_AGENT_DIR ?? process.env.HOME, "telegram.json");
+      const raw = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+      return (raw as { openclawStyle?: { enabled?: boolean } }).openclawStyle;
+    } catch { return undefined; }
+  })();
   if (openclawStyleCfg?.enabled) {
     mountOpenclawBridge(activityRuntime, createTelegramMountDeps(
       {
