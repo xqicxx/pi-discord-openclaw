@@ -71,6 +71,36 @@ export interface CommandExecutionCtx {
   setSessionName(name: string): void;
   /** 按 id/别名设置模型（index.ts 经 modelRegistry 解析）。返回 false 表示未找到。 */
   setModel(query: string): Promise<boolean>;
+  // ---- 只读会话能力面（笔记 22：终端 only 命令桥接）----
+  /** 会话摘要：文件/ID/名称/leaf（经 sessionManager 只读面）。 */
+  getSessionInfo(): {
+    sessionFile?: string;
+    sessionId?: string;
+    sessionName?: string;
+    leafId?: string | null;
+    entryCount?: number;
+  } | undefined;
+  /** 会话树渲染文本（getTree → 缩进树）。 */
+  getSessionTreeText(): string | undefined;
+  /** 最近一条 assistant 回复文本（index.ts 在 message_end 缓存）。 */
+  getLastAssistantText(): string | undefined;
+  /** 可用模型列表（modelRegistry.getAll 格式化）。 */
+  listAllModels(): string[];
+  /** 可用思考级别列表（modelRegistry 支持的 levels）。 */
+  listThinkingLevels(): string[];
+  /** 当前生效的设置（模型/思考/作用域/自动压缩），/settings 用。 */
+  getSettingsText(): string | undefined;
+}
+/** 只读能力面是否具备（index.ts 无会话能力时返回 undefined）。 */
+export interface CommandReadonlyCtx {
+  getSessionInfo(): {
+    sessionFile?: string;
+    sessionId?: string;
+    sessionName?: string;
+    leafId?: string | null;
+    entryCount?: number;
+  } | undefined;
+  getSessionTreeText(): string | undefined;
 }
 
 /** 命令执行结果：回复文本 + 是否 ephemeral。 */
@@ -361,6 +391,86 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
       category: "session",
       tier: "essential",
       acceptsArgs: true,
+    }),
+    // ---- 笔记 22：终端 only 命令桥接（本地执行注册表；Discord 注册仍纯动态）----
+    defineChatCommand({
+      key: "tree",
+      nativeName: "tree",
+      description: "Show the session tree.",
+      category: "session",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "session",
+      nativeName: "session",
+      description: "Show session info and stats.",
+      category: "session",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "copy",
+      nativeName: "copy",
+      description: "Copy the last assistant message.",
+      category: "status",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "settings",
+      nativeName: "settings",
+      description: "Show current settings (model/thinking/scoped/context).",
+      category: "options",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "scoped-models",
+      nativeName: "scoped-models",
+      description: "Show scoped models for cycling.",
+      category: "options",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "models",
+      nativeName: "models",
+      description: "List all configured models.",
+      category: "options",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "thinking-levels",
+      nativeName: "thinking-levels",
+      description: "List available thinking levels for the current model.",
+      category: "options",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "export",
+      nativeName: "export",
+      description: "Export the session to an HTML file (RPC bridge).",
+      category: "session",
+      tier: "standard",
+      args: [
+        {
+          name: "path",
+          description: "Output path",
+          type: "string",
+          required: false,
+          captureRemaining: true,
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "changelog",
+      nativeName: "changelog",
+      description: "Show changelog entries.",
+      category: "status",
+      tier: "standard",
+    }),
+    defineChatCommand({
+      key: "hotkeys",
+      nativeName: "hotkeys",
+      description: "Show keyboard shortcuts.",
+      category: "status",
+      tier: "standard",
     }),
   ];
   assertCommandRegistry(commands);

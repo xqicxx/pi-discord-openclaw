@@ -75,7 +75,8 @@ function assert(cond, label) {
 {
   const merged = mergeCommandSets(buildBuiltinCommands(), await loadPiBuiltinCommands());
   assert(findMergedCommandByNativeName(merged, 'stop')?.key === 'stop', '查本地命令');
-  assert(findMergedCommandByNativeName(merged, 'SETTINGS')?.key === 'pi:settings', '查动态命令（大小写不敏感）');
+  // settings 现为本地命令（笔记 22 桥接），本地优先 → key 是 settings
+  assert(findMergedCommandByNativeName(merged, 'SETTINGS')?.key === 'settings', '查 settings（本地优先，大小写不敏感）');
   assert(findMergedCommandByNativeName(merged, 'nope') === undefined, '未知命令 undefined');
 }
 

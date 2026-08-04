@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4: 终端 only 命令桥接（笔记 22 三层架构）
+
+- `Readonly Terminal Commands`: /tree /session /copy /settings /scoped-models /models /thinking-levels /changelog /hotkeys 本地实现——经事件 ctx 的 sessionManager 只读面（getTree/getSessionFile/getLeafId/getSessionName）+ message_end 缓存最后回复 + modelRegistry。Impact: 这些终端命令现在 Discord 可直接调用，不进模型。
+- `RPC Export Bridge`: 新增 src/rpc/rpc-bridge.ts——懒启动 `pi --mode rpc --no-extensions` 子进程（JSONL over stdio，仿 codex-telegram-bot JsonRpcTransport），/export 经 export_html 导出会话 HTML，共享主进程 session-dir，空闲 30s 自动回收。Impact: 会话导出在 Discord 可用，零常驻子进程。
+- `Write Command Guidance`: /new /reset /fork /clone /resume /reload /login /logout /trust /share /import 输出美观的终端引导（原因 + 命令 + 上游限制 issue #5952）。Impact: 不再回「未实现」，明确可用边界。
+
 ## 0.1.3: 动态挂载 pi 全部命令（不写死，笔记 21 修订）
 
 - `Dynamic Command Mounting`: 命令清单不再写死 13 个，改为从 pi 动态获取后全量注册——`loadPiBuiltinCommands()`（BUILTIN_SLASH_COMMANDS 22 个，物理路径探测绕过 package exports）+ `collectPiRuntimeCommands()`（`pi.getCommands()` 的扩展/prompt 命令），与本地可执行命令合并（本地优先去重），注册到 Discord。Impact: Discord 上从 13 个命令增至 86 个（含 settings/fork/tree/resume/login 等 pi 内置与扩展命令），跟随 pi 版本与扩展动态变化。

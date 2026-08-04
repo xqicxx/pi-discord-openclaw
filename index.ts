@@ -52,6 +52,7 @@ import {
   findMergedCommandByNativeName,
 } from "./src/commands/pi-commands.ts";
 import { getCommands, type ChatCommandDefinition } from "./src/commands/registry.ts";
+import { PiRpcBridge } from "./src/rpc/rpc-bridge.ts";
 import {
   InteractionType,
   InteractionResponseType,
@@ -60,6 +61,9 @@ import {
 } from "./src/transport/types.ts";
 
 const TAG = "[pi-discord-openclaw]";
+
+// 最后一条 assistant 完整文本（/copy 用；message_end 缓存，模块级便于 adaptCommandCtx 闭包引用）
+let lastAssistantText: string | undefined;
 
 // Gateway intents: Guilds | GuildMessages | DirectMessages | MessageContent
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
@@ -110,6 +114,90 @@ function adaptCommandCtx(pi: ExtensionAPI, ctx: ExtensionContext): CommandExecut
     listScopedModels: () => ctx.scopedModels.map((entry) => entry.model.id),
     getAllTools: () => pi.getAllTools().map((tool) => tool.name),
     setSessionName: (name) => pi.setSessionName(name),
+    // ---- 笔记 22：只读会话能力面 ----
+    getSessionInfo: () => {
+      const sm = ctx.sessionManager;
+      if (!sm) return undefined;
+      let entryCount: number | undefined;
+      try {
+        entryCount = sm.getEntries().length;
+      } catch { /* 空会话等 */ }
+      return {
+        sessionFile: sm.getSessionFile(),
+        sessionId: sm.getSessionId(),
+        sessionName: sm.getSessionName(),
+        leafId: sm.getLeafId(),
+        entryCount,
+      };
+    },
+    getSessionTreeText: () => {
+      const sm = ctx.sessionManager;
+      if (!sm) return undefined;
+      try {
+        const tree = sm.getTree() as unknown as Array<{
+          entry: { id: string; message?: { role?: string; content?: unknown } };
+          children: unknown[];
+          label?: string;
+        }>;
+        if (!tree || tree.length === 0) return "（空会话）";
+        const lines: string[] = [];
+        const walk = (nodes: typeof tree, prefix: string) => {
+          for (const node of nodes) {
+            const role = node.entry.message?.role ?? "?";
+            const content = node.entry.message?.content;
+            const text =
+              typeof content === "string"
+                ? content.replace(/\s+/g, " ").slice(0, 50)
+                : Array.isArray(content)
+                  ? JSON.stringify(content).replace(/\s+/g, " ").slice(0, 50)
+                  : "";
+            const label = node.label ? ` [${node.label}]` : "";
+            lines.push(
+              `${prefix}${role === "user" ? "👤" : role === "assistant" ? "🤖" : "•"} ${node.entry.id.slice(0, 8)}: ${text}${label}`,
+            );
+            walk(node.children as typeof tree, prefix + "  ");
+          }
+        };
+        walk(tree, "");
+        return lines.join("\n");
+      } catch {
+        return undefined;
+      }
+    },
+    getLastAssistantText: () => lastAssistantText,
+    listAllModels: () => {
+      try {
+        return ctx.modelRegistry.getAll().map((m) => m.id);
+      } catch {
+        return [];
+      }
+    },
+    listThinkingLevels: () => {
+      try {
+        return ctx.model
+          ? (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as string[])
+          : [];
+      } catch {
+        return [];
+      }
+    },
+    getSettingsText: () => {
+      const model = ctx.model?.id ?? "未设置";
+      const thinking = ctx.thinkingLevel ?? "default";
+      const usage = ctx.getContextUsage();
+      const usageText = usage
+        ? `${usage.tokens ?? "?"} / ${usage.contextWindow} (${usage.percent ?? "?"}%)`
+        : "未知";
+      const scoped = ctx.scopedModels.length > 0 ? ctx.scopedModels.map((s) => s.model.id).join(", ") : "全部可用";
+      const name = ctx.sessionManager?.getSessionName?.();
+      return [
+        `**模型**: ${model}`,
+        `**思考**: ${thinking}`,
+        `**上下文**: ${usageText}`,
+        `**作用域模型**: ${scoped}`,
+        ...(name ? [`**会话名**: ${name}`] : []),
+      ].join("\n");
+    },
     setModel: async (query) => {
       const trimmed = query.trim();
       if (!trimmed) return false;
@@ -159,6 +247,8 @@ export default function (pi: ExtensionAPI) {
   let applicationId: string | undefined;
   // 合并后的命令集（本地可执行 + pi 动态命令），ready 后填充
   let mergedCommands: ReturnType<typeof getCommands> | undefined;
+  // RPC 只读桥（/export 等；懒启动，笔记 22）
+  const rpc = new PiRpcBridge({ idleMs: 30_000 });
 
   const delivery: DiscordDelivery = {
     sendMessage: async (text) => {
@@ -258,6 +348,7 @@ export default function (pi: ExtensionAPI) {
       const result = await executeCommand(local, readInteractionArgs(interaction), {
         pi,
         getCtx: () => commandCtx,
+        rpc,
       });
       await respondInteraction(interaction, result.content, result.ephemeral ?? true);
       return;
@@ -294,6 +385,7 @@ export default function (pi: ExtensionAPI) {
         const result = await executeCommand(resolved.command, resolved.args, {
           pi,
           getCtx: () => commandCtx,
+          rpc,
         });
         await replyTextCommand(channelId, result.content);
       })();
@@ -334,6 +426,11 @@ export default function (pi: ExtensionAPI) {
   const captureCtx = (ctx: ExtensionContext) => {
     if (!commandCtx) console.log(`${TAG} command ctx captured（命令上下文就绪）`);
     commandCtx = adaptCommandCtx(pi, ctx);
+    // RPC 桥会话目录跟随主进程（export_html 读同一批 session 文件）
+    try {
+      const dir = ctx.sessionManager?.getSessionDir?.();
+      if (dir) rpc.setSessionDir(dir);
+    } catch { /* 忽略 */ }
   };
   // 启动即捕获 ctx（pi 启动时 session_start 必触发；命令拦截不进 agent，
   // 若只依赖运行期事件，重启后第一次 /status 会报「桥接尚未就绪」）
@@ -348,6 +445,23 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("message_start", (_event, ctx) => {
     captureCtx(ctx);
+  });
+  pi.on("message_end", (event, ctx) => {
+    captureCtx(ctx);
+    // /copy：缓存最后一条 assistant 完整文本
+    try {
+      const msg = event.message as { role?: string; content?: unknown } | undefined;
+      if (msg?.role === "assistant" && msg.content) {
+        if (typeof msg.content === "string") {
+          lastAssistantText = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          const parts = msg.content
+            .map((part) => (typeof part === "string" ? part : (part as { text?: string }).text ?? ""))
+            .join("\n");
+          if (parts.trim()) lastAssistantText = parts;
+        }
+      }
+    } catch { /* 忽略 */ }
   });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
