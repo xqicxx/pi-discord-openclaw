@@ -419,7 +419,8 @@ export default function (pi: ExtensionAPI) {
         }
         const dynamic = [...builtins, ...runtime];
         console.log(`${TAG} 动态命令收集：builtins=${builtins.length} runtime=${runtime.length}`);
-        const merged = mergeCommandSets(getCommands(), dynamic);
+        // 斜杠注册 = 纯 pi 动态命令（不写死；本地执行器按 nativeName 匹配，见分发逻辑）
+        const merged = mergeCommandSets([], dynamic);
         mergedCommands = merged;
         const commands = merged.map((command) => ({
           name: command.nativeName as string,
@@ -430,7 +431,7 @@ export default function (pi: ExtensionAPI) {
         try {
           await rest.registerApplicationCommands(applicationId, commands);
           console.log(
-            `${TAG} 已注册 ${commands.length} 个 slash 命令（本地 ${getCommands().length} + 动态 ${dynamic.length}）`,
+            `${TAG} 已注册 ${commands.length} 个 slash 命令（纯动态，无写死）`,
           );
         } catch (error) {
           const detail =
