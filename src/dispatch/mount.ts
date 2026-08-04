@@ -102,7 +102,13 @@ export function mountOpenclawBridge(
     orig.onToolEnd?.(event);
   };
   activityRuntime.onAgentStart = (target) => {
-    const chatId = typeof target === "string" ? target : "default";
+    // target 可能是 string 或 TelegramActivityTarget({ chatId })
+    const chatId =
+      typeof target === "string"
+        ? target
+        : target && typeof target === "object" && "chatId" in target
+          ? String((target as { chatId: unknown }).chatId)
+          : "default";
     bridge.beginTurn({ chatId });
     orig.onAgentStart?.(target);
   };
