@@ -205,8 +205,9 @@ export class DraftStream {
   /** Final flush + mark stopped. */
   async stop(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
-    this.stopped = true;
+    // 先发送 pending 文本，再标记 stopped（否则 flush() 会因 stopped 直接返回，最终回复丢失）
     await this.flush();
+    this.stopped = true;
     await this.deletePreviewIfDwelled();
   }
 
