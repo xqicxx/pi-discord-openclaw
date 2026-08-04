@@ -18,7 +18,7 @@ import { ReasoningLane } from "../reasoning/reasoning-lane.ts";
 import { ProgressLane } from "../progress/progress-lane.ts";
 import { InboundDebouncer } from "../inbound/debounce.ts";
 
-export type StreamMode = "progress" | "partial" | "full";
+export type StreamMode = "off" | "partial" | "block" | "progress"; // 对齐 openclaw
 
 export interface OpenclawBridgeConfig {
   streamMode: StreamMode;
