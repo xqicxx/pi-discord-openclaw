@@ -38,11 +38,17 @@ import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { resolveTextCommand } from "./src/commands/text-commands.ts";
 import {
   findCommandByNativeName,
-  listNativeCommandSpecs,
   type CommandExecutionCtx,
 } from "./src/commands/registry.ts";
 import { executeCommand } from "./src/commands/handler.ts";
 import { buildDiscordCommandOptions } from "./src/commands/options.ts";
+import {
+  collectPiRuntimeCommands,
+  loadPiBuiltinCommands,
+  mergeCommandSets,
+  findMergedCommandByNativeName,
+} from "./src/commands/pi-commands.ts";
+import { getCommands } from "./src/commands/registry.ts";
 import {
   InteractionType,
   InteractionResponseType,
@@ -148,6 +154,8 @@ export default function (pi: ExtensionAPI) {
   let botUsername: string | undefined;
   // application id（slash 命令注册，READMEY.application.id）
   let applicationId: string | undefined;
+  // 合并后的命令集（本地可执行 + pi 动态命令），ready 后填充
+  let mergedCommands: ReturnType<typeof getCommands> | undefined;
 
   const delivery: DiscordDelivery = {
     sendMessage: async (text) => {
@@ -229,24 +237,39 @@ export default function (pi: ExtensionAPI) {
       .join(" ");
   }
 
-  /** slash 命令分发（本地执行，不进模型）。 */
+  /** slash 命令分发（本地执行，不进模型）。动态命令（pi 内置/扩展，无本地 handler）提示终端。 */
   async function handleInteraction(interaction: DiscordInteraction): Promise<void> {
     if (interaction.type !== InteractionType.ApplicationCommand) return;
     const name = interaction.data?.name;
     if (!name) return;
-    const command = findCommandByNativeName(name);
-    if (!command) return;
     // 频道 allowlist 与消息一致
     const channelId = interaction.channel_id;
     if (conn.channels?.length && channelId && !conn.channels.includes(channelId)) {
       await respondInteraction(interaction, "该频道未授权使用命令。", true);
       return;
     }
-    const result = await executeCommand(command, readInteractionArgs(interaction), {
-      pi,
-      getCtx: () => commandCtx,
-    });
-    await respondInteraction(interaction, result.content, result.ephemeral ?? true);
+    // 本地可执行命令优先；否则查动态合并集（pi 内置/扩展命令 → 提示终端）
+    const local = findCommandByNativeName(name);
+    const merged = mergedCommands;
+    if (local) {
+      const result = await executeCommand(local, readInteractionArgs(interaction), {
+        pi,
+        getCtx: () => commandCtx,
+      });
+      await respondInteraction(interaction, result.content, result.ephemeral ?? true);
+      return;
+    }
+    const dynamicCommand =
+      merged && findMergedCommandByNativeName(merged, name);
+    if (dynamicCommand) {
+      await respondInteraction(
+        interaction,
+        `/${name} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+        true,
+      );
+      return;
+    }
+    await respondInteraction(interaction, `未知命令：/${name}`, true);
   }
 
   // 入站：Gateway MESSAGE_CREATE → 过滤 → 文本命令拦截 → ack(👀) → debounce → pi
@@ -274,6 +297,19 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    // 动态命令文本形式（pi 内置/扩展命令，无本地 handler）→ 提示终端执行
+    if (content.startsWith("/") && mergedCommands) {
+      const match = content.match(/^\/([a-z0-9-_]+)/i);
+      const candidate = match?.[1];
+      if (candidate && findMergedCommandByNativeName(mergedCommands, candidate)) {
+        void replyTextCommand(
+          channelId,
+          `/${candidate} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+        );
+        return;
+      }
+    }
+
     // 普通消息：ack + 提交 pi
     const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
     statusReactions = createStatusReactionController(adapter);
@@ -293,8 +329,23 @@ export default function (pi: ExtensionAPI) {
 
   // 出站：pi 事件 → lanes（与 openclaw 的 turn 生命周期对齐）；同时捕获命令 ctx
   const captureCtx = (ctx: ExtensionContext) => {
+    if (!commandCtx) console.log(`${TAG} command ctx captured（命令上下文就绪）`);
     commandCtx = adaptCommandCtx(pi, ctx);
   };
+  // 启动即捕获 ctx（pi 启动时 session_start 必触发；命令拦截不进 agent，
+  // 若只依赖运行期事件，重启后第一次 /status 会报「桥接尚未就绪」）
+  pi.on("session_start", (_event, ctx) => {
+    captureCtx(ctx);
+  });
+  pi.on("input", (_event, ctx) => {
+    captureCtx(ctx);
+  });
+  pi.on("turn_start", (_event, ctx) => {
+    captureCtx(ctx);
+  });
+  pi.on("message_start", (_event, ctx) => {
+    captureCtx(ctx);
+  });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
     bridge.beginTurn({ chatId: activeChannelId ?? "default" });
@@ -338,25 +389,36 @@ export default function (pi: ExtensionAPI) {
     void statusReactions?.setDone();
   });
 
-  // 连接 Gateway；ready 后注册 slash 命令（笔记 20：openclaw provider.deploy.ts 语义）
+  // 连接 Gateway；ready 后注册 slash 命令（笔记 20/21：
+  // 动态 = 本地可执行命令 + pi 内置 BUILTIN_SLASH_COMMANDS + pi.getCommands() 扩展/prompt 命令）
   gateway.events.on("ready", (data) => {
     applicationId = data.application?.id;
     botUsername = data.user?.username;
     if (applicationId) {
-      const specs = listNativeCommandSpecs();
-      const commands = specs.map((command) => ({
-        name: command.nativeName as string,
-        description: command.description,
-        options: buildDiscordCommandOptions(command),
-      }));
-      void rest
-        .registerApplicationCommands(applicationId, commands)
-        .then(() => {
-          console.log(`${TAG} 已注册 ${commands.length} 个 slash 命令`);
-        })
-        .catch((error) => {
-          console.error(`${TAG} slash 命令注册失败：`, error?.message ?? error);
-        });
+      void (async () => {
+        const dynamic = [
+          ...(await loadPiBuiltinCommands()),
+          ...collectPiRuntimeCommands(pi),
+        ];
+        const merged = mergeCommandSets(getCommands(), dynamic);
+        mergedCommands = merged;
+        const commands = merged.map((command) => ({
+          name: command.nativeName as string,
+          description: command.description,
+          options: buildDiscordCommandOptions(command),
+        }));
+        try {
+          await rest.registerApplicationCommands(applicationId, commands);
+          console.log(
+            `${TAG} 已注册 ${commands.length} 个 slash 命令（本地 ${getCommands().length} + 动态 ${dynamic.length}）`,
+          );
+        } catch (error) {
+          console.error(
+            `${TAG} slash 命令注册失败：`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      })();
     }
     console.log(`${TAG} Discord Gateway 已连接`);
   });
