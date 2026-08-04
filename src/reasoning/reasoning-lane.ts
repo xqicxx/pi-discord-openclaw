@@ -1,6 +1,6 @@
-// Reasoning lane — ported from openclaw reasoning-lane-coordinator.ts (笔记 02).
+// Reasoning lane — ported from openclaw reasoning-lane-coordinator.ts (笔记 02/16).
 // 把模型流中的思考（reasoning）与回答（answer）分离：
-// 思考以 🧠 _斜体_ 独立消息发送，回答走 answer lane。
+// 思考以 > 🧠 blockquote 独立消息发送（openclaw discord 原生格式，笔记 16 §1），回答走 answer lane。
 
 // 笔记 02 核心：
 //   1. splitTelegramReasoningText(text, isReasoning) — 思考/回答分离
@@ -11,7 +11,7 @@
 
 import type { DraftStream } from "../draft/draft-stream.ts";
 
-const REASONING_MESSAGE_RE = /^🧠\s+_/u;
+const REASONING_MESSAGE_RE = /^>\s*🧠/u;
 const CORE_THINKING_HEADER_RE = /^Thinking\.{0,3}\s*\n+/u;
 const LEGACY_REASONING_MESSAGE_PREFIX = "Reasoning:\n";
 
@@ -23,11 +23,23 @@ const REASONING_TAG_PREFIXES = [
 const THINKING_TAG_RE =
   /<\s*(\/?)\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b[^<>]*>/gi;
 
-/** 笔记 02-3: 文本 → 🧠 _斜体_。纯文本先包斜体（openclaw formatReasoningMessage 行为），再 🧠。 */
+/**
+ * 笔记 16 §1: 文本 → > 🧠 blockquote（openclaw formatDiscordReasoningQuote）。
+ * 每行 `> ` 前缀，首行加 🧠；空行剔除。
+ */
+export function formatDiscordReasoningQuote(quoteText: string): string | undefined {
+  const lines = quoteText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return undefined;
+  lines[0] = `🧠 ${lines[0]}`;
+  return lines.map((line) => `> ${line}`).join("\n");
+}
+
 function markReasoningMessage(formatted: string): string {
   const withoutHeader = formatted.replace(CORE_THINKING_HEADER_RE, "");
-  const body = /^_/u.test(withoutHeader) ? withoutHeader : `_${withoutHeader.trim()}_`;
-  return body.replace(/^_/u, "🧠 _");
+  return formatDiscordReasoningQuote(withoutHeader) ?? "";
 }
 
 /** 笔记 02-2: 提取标签内思考文本。 */
@@ -115,12 +127,10 @@ export function createTelegramReasoningStepState() {
   };
 }
 
-/** 渲染：按风格输出思考文本。 */
+/** 渲染：按风格输出思考文本（discord 原生 blockquote，笔记 16 §1）。 */
 export function renderReasoningText(text: string, style: "emoji-italic" | "italic" | "hidden"): string {
   if (style === "hidden") return "";
-  const trimmed = text.trim().replaceAll("_", "\\_");
-  if (style === "emoji-italic") return `🧠 _${trimmed}_`;
-  return `_${trimmed}_`;
+  return formatDiscordReasoningQuote(text) ?? "";
 }
 
 /**

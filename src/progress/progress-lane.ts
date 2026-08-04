@@ -1,9 +1,11 @@
-// Progress lane — ported from openclaw progress-draft-preview.ts + progress-draft-lines.ts (笔记 03/06).
+// Progress lane — ported from openclaw progress-draft-preview.ts + progress-draft-lines.ts (笔记 03/06/16).
 // 工具调用期间显示进度草稿：一行一个工具，实时更新（tool-start/update/end）。
 //
-// 笔记 03 要点：
-//   - 行格式：<b>🔧 name</b> <code>detail</code> <i>running|✓</i>
-//   - 已完成工具折叠为摘要（summary）
+// 笔记 16 §2（discord 原生格式，buildChannelProgressDraftLine）：
+//   - 普通工具行：🛠️ Bash: run tests（emoji + label + ": " + detail）
+//   - command 工具（exec/bash）：🛠️ run tests（紧凑：emoji + detail，省略 label）
+//   - 无 detail：🛠️ Bash
+//   - emoji 映射 fallback：🧩（对应 openclaw resolveToolDisplay / tool-display-config）
 // 笔记 06 要点：
 //   - ChannelProgressDraftLineInput: tool/item/plan/approval/command-output 事件
 //   - 行结构：{ id, kind, text, label, status, icon }
@@ -35,6 +37,86 @@ export interface ToolProgressEvent {
 
 const MAX_LINE_CHARS = 300;
 
+/** openclaw tool-display-config 子集（resolveToolDisplay 的 emoji 映射）。 */
+const TOOL_EMOJI: Record<string, string> = {
+  bash: "🛠️",
+  exec: "🛠️",
+  "web_search": "🔎",
+  "web-search": "🔎",
+  "grep_search": "🔎",
+  "grep-search": "🔎",
+  read: "📄",
+  write: "✏️",
+  apply_patch: "✏️",
+  "apply-patch": "✏️",
+  "edit": "✏️",
+  "todo": "📋",
+  "list": "📋",
+  "ls": "📋",
+  "glob": "📋",
+  "memory": "🧠",
+  "recall": "🧠",
+  "send_message": "📨",
+  "send-message": "📨",
+  "notify": "🔔",
+  "http": "🌐",
+  "fetch": "🌐",
+  "curl": "🌐",
+  "browser": "🌐",
+  "docker": "🐳",
+  "docker_exec": "🐳",
+  "container": "🐳",
+  "git": "🌿",
+  "npm": "📦",
+  "pnpm": "📦",
+  "yarn": "📦",
+  "python": "🐍",
+  "node": "🟢",
+  "tsx": "🟢",
+  "go": "🐹",
+  "rust": "🦀",
+  "cargo": "🦀",
+  "search": "🔎",
+  "request": "🌐",
+  "approve": "✅",
+  "deny": "⛔",
+  "plan": "🗺️",
+  "wait": "⏳",
+  "think": "🧠",
+  "reason": "🧠",
+  "image": "🖼️",
+  "video": "🎬",
+  "audio": "🎵",
+  "tts": "🔊",
+  "voice": "🎙️",
+  "transcribe": "📝",
+  "translate": "🌍",
+  "code": "💻",
+  "shell": "🛠️",
+  "terminal": "🛠️",
+  "open": "🔗",
+  "close": "🔒",
+  "delete": "🗑️",
+  "remove": "🗑️",
+  "move": "📦",
+  "copy": "📋",
+  "rename": "🏷️",
+  "mkdir": "📁",
+  "make_dir": "📁",
+  "upload": "⬆️",
+  "download": "⬇️",
+  "export": "📤",
+  "import": "📥",
+};
+
+/** openclaw resolveToolDisplay：工具名 → emoji + label（fallback 🧩 + 默认标签）。 */
+export function resolveToolDisplay(name?: string): { emoji: string; label: string } {
+  const key = (name ?? "").trim().toLowerCase();
+  const emoji = TOOL_EMOJI[key] ?? "🧩";
+  const label = key || "tool_call";
+  return { emoji, label };
+}
+
 /** 超长截断（笔记 03: clipTelegramProgressText）。 */
 export function clipTelegramProgressText(text: string, max = MAX_LINE_CHARS): string {
   return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
@@ -54,7 +136,8 @@ export function buildToolProgressLine(input: ToolProgressEvent): ProgressLine | 
   if (!name) return undefined;
   const id = input.toolCallId ? `tool:${input.toolCallId}` : undefined;
   const status = input.ok === false ? "error" : input.phase === "end" ? "completed" : "running";
-  const icon = input.phase === "end" ? (input.ok === false ? "✗" : "✓") : "🔧";
+  const { emoji } = resolveToolDisplay(name);
+  const icon = input.phase === "end" ? (input.ok === false ? "✗" : "✓") : emoji;
   const label = `${icon} ${name}`;
   return {
     id,
@@ -89,20 +172,15 @@ export function renderProgressLine(line: ProgressLine): string {
     return escapeDiscordMarkdown(line.text);
   }
   const label = [line.icon, line.label].filter(Boolean).join(" ");
-  const parts = [`**${escapeDiscordMarkdown(label)}**`];
   const detail = line.detail && line.detail !== line.label ? line.detail : undefined;
   if (detail) {
-    parts.push(`\`${escapeDiscordMarkdown(clipTelegramProgressText(detail))}\``);
-  } else {
-    const text = line.text.trim();
-    if (text && text !== label) {
-      parts.push(`\`${escapeDiscordMarkdown(clipTelegramProgressText(text))}\``);
-    }
+    return `${escapeDiscordMarkdown(label)}: ${escapeDiscordMarkdown(clipTelegramProgressText(detail))}`;
   }
-  if (line.status && line.status !== "completed" && line.status !== line.detail) {
-    parts.push(`*${escapeDiscordMarkdown(line.status)}*`);
+  const text = line.text.trim();
+  if (text && text !== label) {
+    return `${escapeDiscordMarkdown(label)}: ${escapeDiscordMarkdown(clipTelegramProgressText(text))}`;
   }
-  return parts.join(" ");
+  return escapeDiscordMarkdown(label);
 }
 
 /** Discord Markdown 转义（` * _ [ ] 需转义；保留换行）。 */

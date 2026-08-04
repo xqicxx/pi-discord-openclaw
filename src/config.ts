@@ -1,6 +1,9 @@
-// Configuration for OpenClaw-style streaming.
+// Configuration for OpenClaw-style streaming (Discord edition).
 // Mirrors openclaw: streaming.mode / throttleMs / chunking, reasoning style,
-// tool progress lanes, inbound debounce.
+// tool progress lanes, inbound debounce. 读取 discord.json（openclawStyle 段）。
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type StreamingMode = "progress" | "partial" | "full";
 
@@ -38,23 +41,20 @@ export const DEFAULTS: OpenclawStyleConfig = {
  */
 /** 依次解析 discord.json 候选路径：PI_CODING_AGENT_DIR → ~/.pi/agent → HOME。 */
 function resolveDiscordJsonPath(): string {
-  const os = require("node:os");
-  const path = require("node:path");
   const candidates: string[] = [];
   if (process.env.PI_CODING_AGENT_DIR) {
-    candidates.push(path.join(process.env.PI_CODING_AGENT_DIR, "discord.json"));
+    candidates.push(join(process.env.PI_CODING_AGENT_DIR, "discord.json"));
   }
-  candidates.push(path.join(os.homedir(), ".pi", "agent", "discord.json"));
-  if (process.env.HOME) candidates.push(path.join(process.env.HOME, "discord.json"));
+  candidates.push(join(homedir(), ".pi", "agent", "discord.json"));
+  if (process.env.HOME) candidates.push(join(process.env.HOME, "discord.json"));
   return candidates[0];
 }
 
 export function loadOpenclawStyleConfig(): OpenclawStyleConfig {
   try {
-    const fs = require("node:fs");
     const p = resolveDiscordJsonPath();
-    if (fs.existsSync(p)) {
-      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (existsSync(p)) {
+      const raw = JSON.parse(readFileSync(p, "utf8"));
       const ocs = raw?.openclawStyle ?? raw?.["openclaw-style"];
       if (ocs) return deepMerge(DEFAULTS, ocs);
     }
@@ -68,10 +68,9 @@ export function loadOpenclawStyleConfig(): OpenclawStyleConfig {
  */
 export function isOpenclawStyleEnabled(): boolean {
   try {
-    const fs = require("node:fs");
     const p = resolveDiscordJsonPath();
-    if (!fs.existsSync(p)) return false;
-    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (!existsSync(p)) return false;
+    const raw = JSON.parse(readFileSync(p, "utf8"));
     return (raw as { openclawStyle?: { enabled?: boolean } }).openclawStyle?.enabled === true;
   } catch {
     return false;
@@ -104,10 +103,9 @@ export interface DiscordConnectionConfig {
 export function loadDiscordConnectionConfig(): DiscordConnectionConfig {
   const envToken = process.env.DISCORD_BOT_TOKEN?.trim();
   try {
-    const fs = require("node:fs");
     const p = resolveDiscordJsonPath();
-    if (fs.existsSync(p)) {
-      const raw = JSON.parse(fs.readFileSync(p, "utf8")) as {
+    if (existsSync(p)) {
+      const raw = JSON.parse(readFileSync(p, "utf8")) as {
         token?: string;
         channels?: string[];
         ignoreBots?: boolean;

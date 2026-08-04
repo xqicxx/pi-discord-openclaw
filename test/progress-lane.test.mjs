@@ -27,11 +27,11 @@ function assert(cond, label) {
 
 // 2. 渲染 HTML
 {
-  const line = buildToolProgressLine({ event: 'tool', toolCallId: 't1', name: 'exec_command', phase: 'start', args: { cmd: 'ls' } });
+  const line = buildToolProgressLine({ event: 'tool', toolCallId: 't1', name: 'bash', phase: 'start', args: { cmd: 'ls' } });
   const html = renderProgressLine(line);
-  assert(html.includes('**'), '含 ** 加粗');
-  assert(html.includes('`'), '含 ` 代码块');
-  assert(html.includes('running'), '含 running 状态');
+  assert(html.includes('🛠️'), '含工具 emoji');
+  assert(html.includes(': ls'), '含 detail');
+  assert(!html.includes('*running*'), '原生行无状态标记');
 }
 
 // 3. 完成 → ✓，失败 → ✗

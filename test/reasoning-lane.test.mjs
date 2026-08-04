@@ -22,20 +22,20 @@ function assert(cond, label) {
 // 2. 带 <think> 标签 → 提取为 🧠 reasoning
 {
   const r = splitTelegramReasoningText('Let me think.<think>需要检查配置</think>Now answer.', true);
-  assert((r.reasoningText ?? '').includes('🧠'), '提取 thinking → 🧠 前缀');
+  assert((r.reasoningText ?? '').startsWith('> 🧠'), '提取 thinking → > 🧠 blockquote');
   assert((r.reasoningText ?? '').includes('需要检查配置'), 'thinking 内容保留');
 }
 
 // 3. 已是 🧠 消息 → 原样
 {
-  const r = splitTelegramReasoningText('🧠 _already_', true);
-  assert(r.reasoningText === '🧠 _already_', '已是 🧠 → 原样');
+  const r = splitTelegramReasoningText('> 🧠 _already_', true);
+  assert(r.reasoningText === '> 🧠 _already_', '已是 > 🧠 → 原样');
 }
 
 // 4. "Thinking" 头 → 重写为 🧠
 {
   const r = splitTelegramReasoningText('Thinking\n\n_body_', true);
-  assert(r.reasoningText === '🧠 _body_', 'Thinking 头 → 🧠 重写');
+  assert(r.reasoningText === '> 🧠 _body_', 'Thinking 头 → > 🧠 重写');
 }
 
 // 5. 部分标签前缀 → 等待更多
@@ -66,8 +66,8 @@ function assert(cond, label) {
 
 // 8. 渲染风格
 {
-  assert(renderReasoningText('think', 'emoji-italic') === '🧠 _think_', 'emoji-italic 渲染');
-  assert(renderReasoningText('think', 'italic') === '_think_', 'italic 渲染');
+  assert(renderReasoningText('think', 'emoji-italic') === '> 🧠 think', 'emoji-italic → blockquote');
+  assert(renderReasoningText('think', 'italic') === '> 🧠 think', 'italic → blockquote');
   assert(renderReasoningText('think', 'hidden') === '', 'hidden 渲染');
 }
 
