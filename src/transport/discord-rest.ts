@@ -1,6 +1,6 @@
 // Discord REST client — ported from openclaw extensions/discord src/internal/rest.ts (笔记 10).
 // 零依赖：node 22 原生 fetch。核心：Bot header、v10 API、429 retry-after 解析、超时。
-import type { DiscordCreatedMessage, Snowflake } from "./types.ts";
+import type { DiscordApplicationCommand, DiscordCreatedMessage, Snowflake } from "./types.ts";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -141,5 +141,42 @@ export class DiscordRest {
   /** DELETE /channels/{id}/messages/{mid}/reactions/{emoji}/@me — 移除 reaction。 */
   async deleteChannelReaction(channelId: Snowflake, messageId: Snowflake, emoji: string): Promise<void> {
     await this.request("DELETE", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
+  }
+
+  // ---- 原生命令（笔记 20：openclaw provider.deploy.ts + native-command-reply.ts 语义）----
+
+  /** PUT /applications/{id}/commands — 全量注册/覆盖 slash 命令（reconcile）。 */
+  async registerApplicationCommands(
+    applicationId: Snowflake,
+    commands: Array<{ name: string; description: string; options?: unknown[] }>,
+  ): Promise<DiscordApplicationCommand[]> {
+    return this.request<DiscordApplicationCommand[]>("PUT", `/applications/${applicationId}/commands`, commands);
+  }
+
+  /** POST /interactions/{id}/{token}/callback — interaction 首次响应（204 无 body）。 */
+  async createInteractionResponse(
+    interactionId: Snowflake,
+    token: string,
+    payload: { type: number; data?: Record<string, unknown> },
+  ): Promise<void> {
+    await this.request("POST", `/interactions/${interactionId}/${token}/callback`, payload);
+  }
+
+  /** POST /webhooks/{applicationId}/{token} — interaction followUp（defer 后必须 followUp）。 */
+  async createInteractionFollowUp(
+    applicationId: Snowflake,
+    token: string,
+    payload: { content: string; flags?: number },
+  ): Promise<DiscordCreatedMessage> {
+    return this.request<DiscordCreatedMessage>(
+      "POST",
+      `/webhooks/${applicationId}/${token}`,
+      payload,
+    );
+  }
+
+  /** DELETE /webhooks/{applicationId}/{token}/messages/@original — 删除原始响应。 */
+  async deleteInteractionOriginalResponse(applicationId: Snowflake, token: string): Promise<void> {
+    await this.request("DELETE", `/webhooks/${applicationId}/${token}/messages/@original`);
   }
 }

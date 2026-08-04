@@ -1,4 +1,4 @@
-// Dispatch bridge layer — ported from openclaw bot-message-dispatch (笔记 05/08).
+// Dispatch bridge layer — ported from openclaw bot-message-dispatch (笔记 05/08/18/19).
 // 把 F1-F4 四个 lane 组装成完整 turn 生命周期：
 //   agent-start → 创建 turn → 各 lane 开始
 //   activity 事件 → 路由到对应 lane
@@ -12,6 +12,10 @@
 //   1. LaneName = "answer" | "reasoning"
 //   2. DraftLaneState：stream / lastPartialText / hasStreamedMessage / finalized
 //   3. 投递结果：preview-finalized / sent / skipped
+// 笔记 19 修正：
+//   1. reasoning **不再独立消息**（删除 reasoningDraft），思维链注入 progress 方块（🧠 _斜体_ 行原地流动）
+//   2. 工具行到达 commit 思维行，下一段思考另起一行（openclaw pushReasoningProgress 语义）
+//   3. 最终回答走 answer lane，progress 方块负责 思维链 + 工具进度
 
 import { DraftStream, type DraftTransport } from "../draft/draft-stream.ts";
 import { ReasoningLane } from "../reasoning/reasoning-lane.ts";
@@ -29,6 +33,10 @@ export interface OpenclawBridgeConfig {
   debounceMs: number;
   /** 笔记 18：progress 模式显示工具行（默认 true）。 */
   toolProgressLines?: boolean;
+  /** 笔记 19：思维链注入 progress 方块开关（openclaw progress.thinking，默认 true）。 */
+  thinkingEnabled?: boolean;
+  /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
+  receiptSummary?: boolean;
 }
 
 export interface DiscordDelivery {
@@ -39,8 +47,8 @@ export interface DiscordDelivery {
 }
 
 /**
- * TurnManager：一个 agent turn 的状态与三个 lane 的编排。
- * 解耦设计：只依赖 lane 的公开接口，不依赖 pi-telegram 内部。
+ * TurnManager：一个 agent turn 的状态与 lane 的编排。
+ * 笔记 19：两条消息——answer（最终回答）+ progress 方块（思维链 🧠 + 工具行 🛠️ 同一条）。
  */
 export class TurnManager {
   readonly chatId: string;
@@ -49,9 +57,7 @@ export class TurnManager {
   private superseded = false;
 
   readonly answer: DraftStream;
-  /** 笔记 18：reasoning 独立 lane（独立消息，不再共用 answer 的 preview）。 */
-  readonly reasoningDraft: DraftStream;
-  /** 笔记 18：progress 独立 lane（独立消息，不再共用 answer 的 preview）。 */
+  /** 笔记 19：progress 方块（思维链 + 工具进度同一条消息）。 */
   readonly progressDraft: DraftStream;
   readonly reasoning: ReasoningLane;
   readonly progress: ProgressLane;
@@ -81,31 +87,28 @@ export class TurnManager {
       transport,
     });
 
-    // 笔记 18: reasoning 独立 lane（🧠 思考独立消息）
-    this.reasoningDraft = new DraftStream({
-      throttleMs: params.config.throttleMs,
-      chunkSize: params.config.chunkSize,
-      transport,
-    });
-
-    // 笔记 18: progress 独立 lane（🔧 工具进度独立消息）
+    // 笔记 19: progress 方块（思维链 + 工具进度同一条消息）
     this.progressDraft = new DraftStream({
       throttleMs: params.config.throttleMs,
       chunkSize: params.config.chunkSize,
       transport,
     });
 
-    // 笔记 02: reasoning lane（🧠 思考）
+    // 笔记 03: progress lane（🔧 工具进度 + 🧠 思维链）
+    this.progress = new ProgressLane(
+      {
+        enabled: params.config.toolProgressEnabled,
+        maxLines: 8,
+        thinking: params.config.thinkingEnabled ?? true,
+        receipt: params.config.receiptSummary ?? false,
+      },
+      this.progressDraft,
+    );
+
+    // 笔记 02/19: reasoning lane（🧠 思维链注入 progress 方块，不再独立消息）
     this.reasoning = new ReasoningLane(
       { enabled: params.config.reasoningEnabled, style: "emoji-italic" },
-      undefined,
-    );
-    this.reasoning.bindDraft(this.reasoningDraft);
-
-    // 笔记 03: progress lane（🔧 工具进度）
-    this.progress = new ProgressLane(
-      { enabled: params.config.toolProgressEnabled, maxLines: 8 },
-      this.progressDraft,
+      this.progress,
     );
   }
 
@@ -149,9 +152,8 @@ export class TurnManager {
 
   /** agent-end：收尾（回答定型 + 清理预览）。 */
   async endTurn(): Promise<void> {
-    // 笔记 18：三条独立 lane 各自收尾（answer 定型 + reasoning/progress 清理）
+    // 笔记 19：answer 定型 + progress 方块收尾（reasoning 已并入 progress）
     await this.answer.stop();
-    await this.reasoningDraft.stop();
     await this.progressDraft.stop();
     this.progress.endTurn();
     this.reasoning.endTurn();
@@ -167,10 +169,10 @@ export type OpenclawActivityEvent =
   | { type: "tool-end"; id?: string; ok?: boolean };
 
 /**
- * OpenclawBridge：Telegram 桥接整合层。
+ * OpenclawBridge：Discord 桥接整合层。
  * - 管理当前 turn（单用户单 turn 模型）
  * - 提供连续输入 debounce
- * - 复用 F1-F4 的 lane 实现（解耦）
+ * - 复用 lane 实现（解耦）
  */
 export class OpenclawBridge {
   private config: OpenclawBridgeConfig;

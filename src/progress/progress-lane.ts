@@ -1,5 +1,7 @@
-// Progress lane — ported from openclaw progress-draft-preview.ts + progress-draft-lines.ts (笔记 03/06/16).
+// Progress lane — ported from openclaw progress-draft-compositor.ts（笔记 03/06/16/19）。
 // 工具调用期间显示进度草稿：一行一个工具，实时更新（tool-start/update/end）。
+// 笔记 19：思维链（reasoning）**注入同一个方块**——🧠 _斜体_ 行原地流动更新，
+// 工具行到达时 commit 当前思维行，下一段思考另起一行（openclaw pushReasoningProgress）。
 //
 // 笔记 16 §2（discord 原生格式，buildChannelProgressDraftLine）：
 //   - 普通工具行：🛠️ Bash: run tests（emoji + label + ": " + detail）
@@ -36,6 +38,13 @@ export interface ToolProgressEvent {
 }
 
 const MAX_LINE_CHARS = 300;
+/** 笔记 19: 思维行默认字符预算（openclaw progress.maxLineChars 默认 120）。 */
+const DEFAULT_THINKING_MAX_CHARS = 120;
+/** 笔记 19: 思考/回答分离正则（openclaw progress-draft-status-text）。 */
+const THINKING_TAG_RE =
+  /<\s*(\/?)\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b[^<>]*>/gi;
+const THINKING_HEADER_RE =
+  /^\s*(?:>\s*)?(?:Reasoning:\s*(?:\r?\n|\r)\s*|Thinking\.{0,3}\s*(?:\r?\n|\r)\s*(?:\r?\n|\r)\s*)/i;
 
 /** openclaw tool-display-config 子集（resolveToolDisplay 的 emoji 映射）。 */
 const TOOL_EMOJI: Record<string, string> = {
@@ -168,6 +177,10 @@ export function removeProgressLine(lines: ProgressLine[], id: string): ProgressL
 
 /** 进度行渲染为 HTML（笔记 03: renderTelegramProgressLine）。 */
 export function renderProgressLine(line: ProgressLine): string {
+  // 笔记 19: 思维行（🧠 _斜体_）原样输出，斜体不能被转义
+  if (line.text.startsWith("🧠 ")) {
+    return line.text;
+  }
   if (!line.icon && (!line.label || line.label === "Commentary")) {
     return escapeDiscordMarkdown(line.text);
   }
@@ -185,7 +198,7 @@ export function renderProgressLine(line: ProgressLine): string {
 
 /** Discord Markdown 转义（` * _ [ ] 需转义；保留换行）。 */
 export function escapeDiscordMarkdown(text: string): string {
-  return text.replace(/([\\`*_\[\]])/g, "\\$1");
+  return text.replace(/([\\\`*_\[\]])/g, "\\$1");
 }
 
 /** 整个进度草稿渲染（多行 <br>）。 */
@@ -193,23 +206,106 @@ export function renderProgressDraft(lines: ProgressLine[]): string {
   return lines.map(renderProgressLine).join("\n");
 }
 
-export interface ProgressLaneOptions {
-  enabled: boolean;
-  maxLines: number;
+// ---------------- 笔记 19：思维链注入（openclaw progress-draft-status-text） ----------------
+
+/**
+ * 笔记 19: 规范化思维文本——剥 <think> 标签、剥 "Reasoning:/Thinking" 头、空白折叠成单行。
+ */
+export function normalizeReasoningProgressLine(text: string): string {
+  const stripped = (text ?? "").replace(THINKING_TAG_RE, "");
+  return stripped
+    .replace(THINKING_HEADER_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
- * ProgressLane：管理工具进度行列表，通过 draft stream 渲染到 Telegram。
+ * 笔记 19: 思维文本累积（openclaw mergeReasoningProgressText）。
+ * 快照（snapshot:true / 以 "Reasoning:/Thinking" 开头）→ 整体替换；普通 delta → 追加。
+ */
+export function mergeReasoningProgressText(
+  current: string,
+  incoming: string,
+  options?: { snapshot?: boolean },
+): string {
+  if (!current) return incoming;
+  const normalizedCurrent = normalizeReasoningProgressLine(current);
+  const normalizedIncoming = normalizeReasoningProgressLine(incoming);
+  if (!normalizedIncoming) return current;
+  if (normalizedIncoming === normalizedCurrent) return current;
+  const isSnapshot =
+    options?.snapshot === true || THINKING_HEADER_RE.test(incoming.trimStart()) ||
+    (normalizedCurrent !== "" && normalizedIncoming.startsWith(normalizedCurrent));
+  return isSnapshot ? incoming : `${current}${incoming}`;
+}
+
+/**
+ * 笔记 19: 思维行格式化（openclaw formatReasoningProgressDisplayLine）。
+ * _斜体_ 包裹 + 词边界截断保持斜体平衡（_ 恰好 2 个）。
+ */
+export function formatReasoningProgressDisplayLine(text: string, maxChars = DEFAULT_THINKING_MAX_CHARS): string {
+  const normalized = normalizeReasoningProgressLine(text);
+  if (!normalized) return "";
+  if (Array.from(normalized).length <= maxChars) return `_${normalized}_`;
+  const head = Array.from(normalized).slice(0, Math.max(1, maxChars - 2)).join("").trimEnd();
+  const boundary = head.search(/\s+\S*$/u);
+  const body =
+    boundary > Math.floor(maxChars * 0.6)
+      ? `${head.slice(0, boundary).trimEnd()}…`
+      : `${head}…`;
+  return `_${body}_`;
+}
+
+/**
+ * 笔记 19: 折叠摘要（openclaw progress-receipt-tracker buildSummaryLine）。
+ * 🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns
+ */
+export function buildProgressReceiptSummary(params: {
+  reasoningSteps: number;
+  toolCalls: number;
+  startedAtMs: number;
+  nowMs?: number;
+}): string {
+  const seconds = Math.max(1, Math.round(((params.nowMs ?? Date.now()) - params.startedAtMs) / 1000));
+  const parts = [
+    ...(params.reasoningSteps > 0 ? [`🧠 ${params.reasoningSteps} thought${params.reasoningSteps === 1 ? "" : "s"}`] : []),
+    ...(params.toolCalls > 0 ? [`🛠️ ${params.toolCalls} tool call${params.toolCalls === 1 ? "" : "s"}`] : []),
+    `⏱️ ${seconds}s`,
+  ];
+  return parts.join(" · ");
+}
+
+export interface ProgressLaneOptions {
+  enabled: boolean;
+  maxLines: number;
+  /** 笔记 19: 思维链注入开关（openclaw progress.thinking，默认 true）。 */
+  thinking?: boolean;
+  /** 笔记 19: 思维行字符预算（openclaw progress.maxLineChars，默认 120）。 */
+  thinkingMaxChars?: number;
+  /** 笔记 19: endTurn 输出折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns）。 */
+  receipt?: boolean;
+}
+
+/**
+ * ProgressLane：管理工具进度行 + 思维链（🧠 _斜体_），同一条 progress draft 消息（方块）。
  * 事件流：tool-start → 加行；tool-update → 更新行；tool-end → 标记 ✓/✗；
- * 全部完成 → 保留摘要或清理。
+ *         pushReasoningProgress → 思维行原地流动；工具行到达 commit 思维行。
  */
 export class ProgressLane {
   private opts: ProgressLaneOptions;
   private draft?: DraftStream;
   private lines: ProgressLine[] = [];
+  /** 笔记 19: 累积中的思维文本（mergeReasoningProgressText）。 */
+  private reasoningRawText = "";
+  /** 笔记 19: 当前渲染的思维行（lastReasoningLine，原地替换目标）。 */
+  private lastReasoningLine: string | undefined;
+  /** 笔记 19: 折叠摘要计数。 */
+  private reasoningSteps = 0;
+  private toolCalls = 0;
+  private startedAtMs = 0;
 
   constructor(opts: ProgressLaneOptions, draft?: DraftStream) {
-    this.opts = opts;
+    this.opts = { thinking: true, thinkingMaxChars: DEFAULT_THINKING_MAX_CHARS, receipt: false, ...opts };
     this.draft = draft;
   }
 
@@ -219,9 +315,45 @@ export class ProgressLane {
 
   beginTurn(): void {
     this.lines = [];
+    this.reasoningRawText = "";
+    this.lastReasoningLine = undefined;
+    this.reasoningSteps = 0;
+    this.toolCalls = 0;
+    this.startedAtMs = Date.now();
+  }
+
+  /** 笔记 19: 注入思维 delta/快照（openclaw pushReasoningProgress）。 */
+  pushReasoningProgress(text?: string, options?: { snapshot?: boolean }): void {
+    if (!this.opts.enabled || !this.opts.thinking || !text) return;
+    this.reasoningRawText = mergeReasoningProgressText(this.reasoningRawText, text, options);
+    const compactLine = formatReasoningProgressDisplayLine(
+      this.reasoningRawText,
+      this.opts.thinkingMaxChars,
+    );
+    if (!compactLine) return;
+    const displayLine = `🧠 ${compactLine}`;
+    const priorIndex =
+      this.lastReasoningLine === undefined ? -1 : this.lines.findIndex((l) => l.text === this.lastReasoningLine);
+    if (priorIndex >= 0) {
+      this.lines[priorIndex] = { kind: "item", text: displayLine, label: displayLine };
+    } else {
+      this.lines.push({ kind: "item", text: displayLine, label: displayLine });
+      if (this.lines.length > this.opts.maxLines) this.lines.shift();
+    }
+    this.lastReasoningLine = displayLine;
+    if (this.reasoningSteps === 0) this.reasoningSteps += 1;
+    this.render();
+  }
+
+  /** 笔记 19: 工具行到达 → commit 当前思维行（下一段思考另起一行）。 */
+  private commitThinking(): void {
+    this.reasoningRawText = "";
+    this.lastReasoningLine = undefined;
   }
 
   private upsert(line: ProgressLine): void {
+    // 笔记 19: 工具行落地前 commit 思维行（与工具行按到达顺序交错）
+    this.commitThinking();
     if (!line.id) {
       this.lines.push(line);
     } else {
@@ -247,7 +379,10 @@ export class ProgressLane {
       phase: "start",
       args: event.args,
     });
-    if (line) this.upsert(line);
+    if (line) {
+      this.toolCalls += 1;
+      this.upsert(line);
+    }
   }
 
   onToolUpdate(event: { id?: string; detail?: string }): void {
@@ -281,6 +416,18 @@ export class ProgressLane {
   }
 
   endTurn(): void {
+    // 笔记 19: 折叠摘要（可开关）
+    if (this.opts.receipt && (this.reasoningSteps > 0 || this.toolCalls > 0)) {
+      this.draft?.updatePreview({
+        text: buildProgressReceiptSummary({
+          reasoningSteps: this.reasoningSteps,
+          toolCalls: this.toolCalls,
+          startedAtMs: this.startedAtMs,
+        }),
+        parseMode: "Markdown",
+      });
+      return;
+    }
     // 全部完成：保留简短摘要（笔记 03: collapse summary）
     if (this.lines.some((l) => l.status === "running")) {
       this.render();

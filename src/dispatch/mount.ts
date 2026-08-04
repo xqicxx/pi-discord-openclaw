@@ -3,6 +3,7 @@
 // 开关：telegram.json 的 openclawStyle.enabled（默认 false，保持上游行为）。
 
 import { OpenclawBridge, type DiscordDelivery } from "./dispatch.ts";
+import { loadOpenclawStyleConfig } from "../config.ts";
 import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activity-adapter.ts";
 
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
@@ -49,15 +50,18 @@ export function mountOpenclawBridge(
     deleteMessage: deps.deleteMessage,
     sendChatAction: deps.sendChatAction,
   };
+  const styleConfig = loadOpenclawStyleConfig();
   const bridge = new OpenclawBridge({
     delivery,
     config: {
-      streamMode: "progress",
-      throttleMs: 1000,
-      chunkSize: 3800,
-      reasoningEnabled: true,
-      toolProgressEnabled: true,
-      debounceMs: 1000,
+      streamMode: styleConfig.streaming.mode === "full" ? "progress" : styleConfig.streaming.mode,
+      throttleMs: styleConfig.streaming.throttleMs,
+      chunkSize: styleConfig.streaming.chunkSize,
+      reasoningEnabled: styleConfig.reasoning.enabled,
+      toolProgressEnabled: styleConfig.toolProgress.enabled,
+      debounceMs: styleConfig.inbound.debounceMs,
+      thinkingEnabled: styleConfig.streaming.thinking,
+      receiptSummary: styleConfig.streaming.receiptSummary,
     },
   });
 

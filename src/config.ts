@@ -21,6 +21,10 @@ export interface OpenclawStyleConfig {
     maxLineChars?: number;
     /** 笔记 18：命令文本模式 raw/status（openclaw progress.commandText，默认 raw）。 */
     commandText?: "raw" | "status";
+    /** 笔记 19：思维链注入 progress 方块（openclaw progress.thinking，默认 true）。 */
+    thinking?: boolean;
+    /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
+    receiptSummary?: boolean;
   };
   reasoning: {
     enabled: boolean;
@@ -45,6 +49,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
     commentary: false,
     maxLineChars: 120,
     commandText: "raw",
+    thinking: true,
+    receiptSummary: false,
   },
   reasoning: { enabled: true, style: "emoji-italic" },
   toolProgress: { enabled: true, maxLines: 8 },

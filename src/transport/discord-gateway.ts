@@ -6,6 +6,7 @@ import type {
   GatewayReadyData,
   GatewayDispatchName,
   DiscordMessage,
+  DiscordInteraction,
 } from "./types.ts";
 
 const DEFAULT_GATEWAY_URL = "wss://gateway.discord.gg/";
@@ -35,6 +36,7 @@ export interface DiscordGatewayEvents {
   ready: (data: GatewayReadyData) => void;
   messageCreate: (message: DiscordMessage) => void;
   messageUpdate: (message: DiscordMessage) => void;
+  interactionCreate: (interaction: DiscordInteraction) => void;
   fatal: (code: number) => void;
   error: (error: Error) => void;
 }
@@ -209,6 +211,8 @@ export class DiscordGateway {
       this.events.emit("messageCreate", payload.d as DiscordMessage);
     } else if (type === "MESSAGE_UPDATE") {
       this.events.emit("messageUpdate", payload.d as DiscordMessage);
+    } else if (type === "INTERACTION_CREATE") {
+      this.events.emit("interactionCreate", payload.d as DiscordInteraction);
     }
   }
 

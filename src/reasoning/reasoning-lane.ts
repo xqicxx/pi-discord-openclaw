@@ -1,15 +1,17 @@
-// Reasoning lane — ported from openclaw reasoning-lane-coordinator.ts (笔记 02/16).
-// 把模型流中的思考（reasoning）与回答（answer）分离：
-// 思考以 > 🧠 blockquote 独立消息发送（openclaw discord 原生格式，笔记 16 §1），回答走 answer lane。
-
-// 笔记 02 核心：
+// Reasoning lane — ported from openclaw reasoning-lane-coordinator.ts（笔记 02/16/19）。
+// 笔记 19 修正：OpenClaw Discord 原生 progress 模式下，思维链**不是独立消息**，
+// 而是注入 progress draft 方块（🧠 _斜体_ 行原地流动更新）。独立 blockquote（> 🧠）
+// 仅用于 durable reasoning（非流式窗口）。因此 ReasoningLane 改为把 delta 路由到
+// ProgressLane.pushReasoningProgress（同一方块），不再持有独立 DraftStream。
+//
+// 笔记 02 核心（纯函数保留，兼容既有测试/调用方）：
 //   1. splitTelegramReasoningText(text, isReasoning) — 思考/回答分离
 //   2. extractThinkingFromTaggedStreamOutsideCode(text) — 提取 <think> 标签内容
-//   3. markReasoningMessage(formatted) — 文本 → 🧠 _斜体_（openclaw formatReasoningMessage 先包斜体再 🧠）
+//   3. formatDiscordReasoningQuote(text) — 文本 → > 🧠 blockquote（durable reasoning 用）
 //   4. isPartialReasoningTagPrefix(text) — 未闭合标签前缀判断
 //   5. createTelegramReasoningStepState() — 思考步骤状态机
 
-import type { DraftStream } from "../draft/draft-stream.ts";
+import type { ProgressLane } from "../progress/progress-lane.ts";
 
 const REASONING_MESSAGE_RE = /^>\s*🧠/u;
 const CORE_THINKING_HEADER_RE = /^Thinking\.{0,3}\s*\n+/u;
@@ -24,7 +26,7 @@ const THINKING_TAG_RE =
   /<\s*(\/?)\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b[^<>]*>/gi;
 
 /**
- * 笔记 16 §1: 文本 → > 🧠 blockquote（openclaw formatDiscordReasoningQuote）。
+ * 笔记 16 §1: 文本 → > 🧠 blockquote（openclaw formatDiscordReasoningQuote，durable reasoning）。
  * 每行 `> ` 前缀，首行加 🧠；空行剔除。
  */
 export function formatDiscordReasoningQuote(quoteText: string): string | undefined {
@@ -127,54 +129,53 @@ export function createTelegramReasoningStepState() {
   };
 }
 
-/** 渲染：按风格输出思考文本（discord 原生 blockquote，笔记 16 §1）。 */
+/** 渲染：按风格输出思考文本（笔记 19：progress 方块内 `🧠 _斜体_` 行由 ProgressLane 负责；此处保留 durable blockquote 渲染）。 */
 export function renderReasoningText(text: string, style: "emoji-italic" | "italic" | "hidden"): string {
   if (style === "hidden") return "";
   return formatDiscordReasoningQuote(text) ?? "";
 }
 
 /**
- * ReasoningLane 类包装（F5 dispatch 使用）：复用上面的纯函数实现。
- * 通过 DraftStream 的 updatePreview 渲染 🧠 思考消息。
+ * ReasoningLane 类包装（笔记 19）：思维链 delta **路由到 ProgressLane**（同一方块流动），
+ * 不再持有独立 DraftStream。onDelta 直接转发给 progress.pushReasoningProgress（delta 追加语义
+ * 在 mergeReasoningProgressText 内处理）；snapshot 语义由 finalize 传入。
  */
 export class ReasoningLane {
   private opts: { enabled: boolean; style: "emoji-italic" | "italic" | "hidden" };
-  private draft?: DraftStream;
-  private accumulated = "";
+  private progress?: ProgressLane;
 
   constructor(
     opts: { enabled: boolean; style: "emoji-italic" | "italic" | "hidden" },
-    _drafts: unknown,
+    progress?: ProgressLane,
   ) {
     this.opts = opts;
+    this.progress = progress;
   }
 
-  bindDraft(draft: DraftStream): void {
-    this.draft = draft;
+  /** 笔记 19: 绑定思维链注入目标（progress 方块）。 */
+  bindProgress(progress: ProgressLane): void {
+    this.progress = progress;
   }
 
   beginTurn(): void {
-    this.accumulated = "";
+    // 累积状态由 ProgressLane 持有
   }
 
+  /** 笔记 19: thinking_delta → progress 方块（🧠 行原地流动）。 */
   onDelta(delta: string): void {
     if (!this.opts.enabled || this.opts.style === "hidden") return;
-    this.accumulated += delta;
-    const split = splitTelegramReasoningText(this.accumulated, true);
-    if (split.reasoningText) {
-      this.draft?.updatePreview({ text: split.reasoningText, parseMode: "HTML" });
-    }
+    this.progress?.pushReasoningProgress(delta);
   }
 
-  finalize(): void {
+  /** 笔记 19: thinking_end（快照语义，整体替换当前思维行）。 */
+  finalize(snapshotText?: string): void {
     if (!this.opts.enabled) return;
-    const split = splitTelegramReasoningText(this.accumulated, true);
-    if (split.reasoningText) {
-      this.draft?.updatePreview({ text: split.reasoningText, parseMode: "HTML" });
+    if (snapshotText) {
+      this.progress?.pushReasoningProgress(snapshotText, { snapshot: true });
     }
   }
 
   endTurn(): void {
-    this.accumulated = "";
+    // 无状态；由 ProgressLane.endTurn 收尾
   }
 }
