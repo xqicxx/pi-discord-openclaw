@@ -13,6 +13,14 @@ export interface OpenclawStyleConfig {
     mode: StreamingMode;
     throttleMs: number;
     chunkSize: number;
+    /** 笔记 18：工具进度行开关（openclaw progress.toolProgress，默认 true）。 */
+    toolProgress?: boolean;
+    /** 笔记 18：progress 草稿显示原始 assistant 评论（openclaw progress.commentary，默认 false）。 */
+    commentary?: boolean;
+    /** 笔记 18：每行字符预算（openclaw progress.maxLineChars，默认 120）。 */
+    maxLineChars?: number;
+    /** 笔记 18：命令文本模式 raw/status（openclaw progress.commandText，默认 raw）。 */
+    commandText?: "raw" | "status";
   };
   reasoning: {
     enabled: boolean;
@@ -29,7 +37,15 @@ export interface OpenclawStyleConfig {
 
 export const DEFAULTS: OpenclawStyleConfig = {
   enabled: true,
-  streaming: { mode: "progress", throttleMs: 1200, chunkSize: 1900 },
+  streaming: {
+    mode: "progress",
+    throttleMs: 1200,
+    chunkSize: 1900,
+    toolProgress: true,
+    commentary: false,
+    maxLineChars: 120,
+    commandText: "raw",
+  },
   reasoning: { enabled: true, style: "emoji-italic" },
   toolProgress: { enabled: true, maxLines: 8 },
   inbound: { debounceMs: 1000 },

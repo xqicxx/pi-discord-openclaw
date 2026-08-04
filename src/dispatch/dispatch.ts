@@ -27,6 +27,8 @@ export interface OpenclawBridgeConfig {
   reasoningEnabled: boolean;
   toolProgressEnabled: boolean;
   debounceMs: number;
+  /** 笔记 18：progress 模式显示工具行（默认 true）。 */
+  toolProgressLines?: boolean;
 }
 
 export interface DiscordDelivery {
@@ -47,6 +49,10 @@ export class TurnManager {
   private superseded = false;
 
   readonly answer: DraftStream;
+  /** 笔记 18：reasoning 独立 lane（独立消息，不再共用 answer 的 preview）。 */
+  readonly reasoningDraft: DraftStream;
+  /** 笔记 18：progress 独立 lane（独立消息，不再共用 answer 的 preview）。 */
+  readonly progressDraft: DraftStream;
   readonly reasoning: ReasoningLane;
   readonly progress: ProgressLane;
 
@@ -75,17 +81,31 @@ export class TurnManager {
       transport,
     });
 
+    // 笔记 18: reasoning 独立 lane（🧠 思考独立消息）
+    this.reasoningDraft = new DraftStream({
+      throttleMs: params.config.throttleMs,
+      chunkSize: params.config.chunkSize,
+      transport,
+    });
+
+    // 笔记 18: progress 独立 lane（🔧 工具进度独立消息）
+    this.progressDraft = new DraftStream({
+      throttleMs: params.config.throttleMs,
+      chunkSize: params.config.chunkSize,
+      transport,
+    });
+
     // 笔记 02: reasoning lane（🧠 思考）
     this.reasoning = new ReasoningLane(
       { enabled: params.config.reasoningEnabled, style: "emoji-italic" },
       undefined,
     );
-    this.reasoning.bindDraft(this.answer);
+    this.reasoning.bindDraft(this.reasoningDraft);
 
     // 笔记 03: progress lane（🔧 工具进度）
     this.progress = new ProgressLane(
       { enabled: params.config.toolProgressEnabled, maxLines: 8 },
-      this.answer,
+      this.progressDraft,
     );
   }
 
@@ -129,7 +149,10 @@ export class TurnManager {
 
   /** agent-end：收尾（回答定型 + 清理预览）。 */
   async endTurn(): Promise<void> {
+    // 笔记 18：三条独立 lane 各自收尾（answer 定型 + reasoning/progress 清理）
     await this.answer.stop();
+    await this.reasoningDraft.stop();
+    await this.progressDraft.stop();
     this.progress.endTurn();
     this.reasoning.endTurn();
   }

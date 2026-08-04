@@ -119,6 +119,8 @@ export default function (pi: ExtensionAPI) {
       reasoningEnabled: cfg.reasoning.enabled,
       toolProgressEnabled: cfg.toolProgress.enabled,
       debounceMs: cfg.inbound.debounceMs,
+      // 笔记 18：可开关配置（openclaw streaming.progress 对应项）
+      toolProgressLines: cfg.streaming.toolProgress,
     },
   });
 
