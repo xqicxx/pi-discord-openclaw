@@ -41,7 +41,6 @@ export class InboundDebouncer {
   private onFlush: (entries: InboundDebounceEntry[]) => Promise<void>;
   private pending = new Map<string, InboundDebounceEntry[]>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private flushing = false;
   private flushQueue: Promise<void> = Promise.resolve();
 
   constructor(options: InboundDebouncerOptions) {

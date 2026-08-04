@@ -268,20 +268,35 @@ test("Command templates resolve array-index placeholders and recursive defaults"
 });
 
 test("Command template execution writes stdin without invoking a shell", async () => {
-  const result = await execCommandTemplate(
-    process.execPath,
-    [
-      "-e",
-      "process.stdin.on('data', data => process.stdout.write(String(data).toUpperCase()))",
-    ],
-    { stdin: "hello" },
-  );
-  assert.deepEqual(result, {
-    stdout: "HELLO",
-    stderr: "",
-    code: 0,
-    killed: false,
-  });
+  // 本机运行环境带 HTTP(S)_PROXY，node 子进程会向 stderr 打 EnvHttpProxyAgent 实验性警告；
+  // 临时清掉代理变量，保证 stderr 断言纯净。
+  const proxyKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+  const saved = new Map<string, string | undefined>();
+  for (const key of proxyKeys) {
+    saved.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  try {
+    const result = await execCommandTemplate(
+      process.execPath,
+      [
+        "-e",
+        "process.stdin.on('data', data => process.stdout.write(String(data).toUpperCase()))",
+      ],
+      { stdin: "hello" },
+    );
+    assert.deepEqual(result, {
+      stdout: "HELLO",
+      stderr: "",
+      code: 0,
+      killed: false,
+    });
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 test("Command template timeout escalates when SIGTERM is ignored", async () => {

@@ -48,8 +48,7 @@ import * as Threads from "./lib/threads.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
 import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
-import { mountOpenclawBridge } from "./src/dispatch/mount.ts";
-import { createTelegramMountDeps } from "./src/dispatch/telegram-api-adapter.ts";
+import { mountOpenclawStyleIfEnabled } from "./src/dispatch/openclaw-mount.ts";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 
@@ -539,27 +538,17 @@ export default function (pi: Pi.ExtensionAPI) {
     },
   });
   // --- OpenClaw-style streaming (optional) ---
-  // 直接读 telegram.json（configStore.get() 只返回 TelegramConfig 接口字段，openclawStyle 会被丢弃）
-  const openclawStyleCfg = (() => {
-    try {
-      const fs = require("node:fs");
-      const path = require("node:path");
-      const cfgPath = path.join(process.env.PI_CODING_AGENT_DIR ?? process.env.HOME, "telegram.json");
-      const raw = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-      return (raw as { openclawStyle?: { enabled?: boolean } }).openclawStyle;
-    } catch { return undefined; }
-  })();
-  if (openclawStyleCfg?.enabled) {
-    mountOpenclawBridge(activityRuntime, createTelegramMountDeps(
-      {
-        sendMessage,
-        editMessageText: editTelegramMessageText,
-        deleteMessage: deleteTelegramMessage,
-        sendChatAction: (chatId) => sendChatAction(chatId, "typing"),
-      },
-      () => activeTurnRuntime.getChatId() ?? proactivePushChatIdGetter() ?? undefined,
-    ));
-  }
+  mountOpenclawStyleIfEnabled(
+    activityRuntime,
+    {
+      sendMessage,
+      editMessageText: editTelegramMessageText,
+      deleteMessage: deleteTelegramMessage,
+      sendChatAction,
+    },
+    activeTurnRuntime.getChatId,
+    proactivePushChatIdGetter,
+  );
   const dispatchNextQueuedTelegramTurn =
     Queue.createTelegramQueueDispatchRuntime({
       ...telegramQueueStore,

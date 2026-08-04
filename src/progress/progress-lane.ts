@@ -33,7 +33,6 @@ export interface ToolProgressEvent {
   ok?: boolean;
 }
 
-const MAX_PROGRESS_LINES = 8;
 const MAX_LINE_CHARS = 300;
 
 /** 超长截断（笔记 03: clipTelegramProgressText）。 */

@@ -19,7 +19,7 @@ export interface MountActivityRuntime {
   onToolStart?: (event: { toolCallId: string; toolName: string; args: unknown }) => void;
   onToolUpdate?: (event: { toolCallId: string; toolName: string; update: unknown }) => void;
   onToolEnd?: (event: { toolCallId: string; toolName: string; result: unknown; isError: boolean }) => void;
-  onAgentStart?: (target?: unknown) => void;
+  onAgentStart?(target?: unknown): void; // 方法语法（bivariant），兼容 TelegramActivityRuntime.onAgentStart
   onAgentEnd?: () => void;
   onAgentSettled?: () => void;
 }
