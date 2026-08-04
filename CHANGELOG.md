@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3: 动态挂载 pi 全部命令（不写死，笔记 21 修订）
+
+- `Dynamic Command Mounting`: 命令清单不再写死 13 个，改为从 pi 动态获取后全量注册——`loadPiBuiltinCommands()`（BUILTIN_SLASH_COMMANDS 22 个，物理路径探测绕过 package exports）+ `collectPiRuntimeCommands()`（`pi.getCommands()` 的扩展/prompt 命令），与本地可执行命令合并（本地优先去重），注册到 Discord。Impact: Discord 上从 13 个命令增至 86 个（含 settings/fork/tree/resume/login 等 pi 内置与扩展命令），跟随 pi 版本与扩展动态变化。
+- `Command Description Truncation`: 命令描述统一截断到 Discord 100 字符上限（openclaw truncateDiscordCommandDescription 语义）。Impact: 修复注册被拒（Invalid Form Body / BASE_TYPE_MAX_LENGTH）——动态命令（prompt 模板）描述超长导致整个 PUT 失败、Discord 保留旧命令的隐蔽问题。
+- `Deploy Error Diagnostics`: DiscordApiError 携带完整 errors body；注册失败日志输出精确非法字段（如 `{47:{description:{...}}}`）。Impact: 全量命令注册失败时可秒级定位具体命令与字段。
+- `Docs`: 笔记 21 补充排障记录（动态收集成功但注册被拒的完整链路）。
+
 ## 0.1.2: pi 命令系统接入（原生移植，笔记 20/21）
 
 - `Native Command Handling`: 新增完整命令系统——文本 `/xx` 消息拦截（normalize 冒号语法/mention 剥离/别名 → canonical，移植 openclaw commands-registry-normalize + command-detection）与 Discord 原生命令（启动时 PUT /applications/{id}/commands 批量注册，INTERACTION_CREATE 分发，ephemeral 回复）。Impact: Discord 里 `/stop`、`/compact`、`/think`、`/model`、`/status` 等命令本地执行，不再被当普通消息发给 agent 导致「直接未响应」。

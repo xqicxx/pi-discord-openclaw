@@ -6,15 +6,17 @@ const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RATE_LIMIT_RETRIES = 3;
 
-/** Discord 错误（含 code/message）。 */
+/** Discord 错误（含 code/message/完整 body——body.errors 指明非法字段）。 */
 export class DiscordApiError extends Error {
   readonly status: number;
   readonly code?: number;
-  constructor(status: number, message: string, code?: number) {
+  readonly body?: unknown;
+  constructor(status: number, message: string, code?: number, body?: unknown) {
     super(message);
     this.name = "DiscordApiError";
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -100,8 +102,13 @@ export class DiscordRest {
           continue;
         }
         if (!res.ok) {
-          const errBody = (data ?? {}) as { message?: string; code?: number };
-          throw new DiscordApiError(res.status, errBody.message ?? `HTTP ${res.status}`, errBody.code);
+          const errBody = (data ?? {}) as { message?: string; code?: number; errors?: unknown };
+          throw new DiscordApiError(
+            res.status,
+            errBody.message ?? `HTTP ${res.status}`,
+            errBody.code,
+            errBody.errors ?? data,
+          );
         }
         return data as T;
       } finally {

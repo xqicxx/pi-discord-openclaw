@@ -46,3 +46,15 @@ resume / reload / quit
 - handler.ts ← openclaw dispatchChannelInboundTurn 语义（本地执行，不进模型）
 - transport ← openclaw native-command-reply.ts safeCall 语义（零依赖 REST 版）
 - 授权 ← 沿用 conn.channels allowlist（与消息一致，简化 openclaw 授权链）
+
+## 5. 排障记录（S176-S179）
+
+- 症状：动态命令收集成功（builtins=22 runtime=56，合并 86 个）但 Discord 上仍是旧 13 个命令。
+- 根因：**Discord 命令描述上限 100 字符**（BASE_TYPE_MAX_LENGTH）。pi.getCommands() 返回的
+  prompt 模板描述可能超长 → 整个 PUT /applications/{id}/commands 被拒（Invalid Form Body），
+  而非只拒单个命令。此前只截断了参数 description，漏了命令本身的 description。
+- 修复：注册时 description 也走 truncateDiscordCommandDescription（openclaw 同款语义）。
+- 排障方法：DiscordApiError 携带完整 errors body（{47:{description:{...}}} 精确定位非法字段）；
+  注册链路写入 /tmp/pi-discord-register.log 观察断点。
+- 经验：Discord 命令注册是全量原子操作——任一命令字段非法即整体失败；诊断必须看 errors body。
+

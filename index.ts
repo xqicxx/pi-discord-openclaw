@@ -41,14 +41,17 @@ import {
   type CommandExecutionCtx,
 } from "./src/commands/registry.ts";
 import { executeCommand } from "./src/commands/handler.ts";
-import { buildDiscordCommandOptions } from "./src/commands/options.ts";
+import {
+  buildDiscordCommandOptions,
+  truncateDiscordCommandDescription,
+} from "./src/commands/options.ts";
 import {
   collectPiRuntimeCommands,
   loadPiBuiltinCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
 } from "./src/commands/pi-commands.ts";
-import { getCommands } from "./src/commands/registry.ts";
+import { getCommands, type ChatCommandDefinition } from "./src/commands/registry.ts";
 import {
   InteractionType,
   InteractionResponseType,
@@ -396,15 +399,32 @@ export default function (pi: ExtensionAPI) {
     botUsername = data.user?.username;
     if (applicationId) {
       void (async () => {
-        const dynamic = [
-          ...(await loadPiBuiltinCommands()),
-          ...collectPiRuntimeCommands(pi),
-        ];
+        let builtins: ChatCommandDefinition[] = [];
+        try {
+          builtins = await loadPiBuiltinCommands();
+        } catch (error) {
+          console.error(
+            `${TAG} loadPiBuiltinCommands 异常：`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        let runtime: ChatCommandDefinition[] = [];
+        try {
+          runtime = collectPiRuntimeCommands(pi);
+        } catch (error) {
+          console.error(
+            `${TAG} collectPiRuntimeCommands 异常：`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        const dynamic = [...builtins, ...runtime];
+        console.log(`${TAG} 动态命令收集：builtins=${builtins.length} runtime=${runtime.length}`);
         const merged = mergeCommandSets(getCommands(), dynamic);
         mergedCommands = merged;
         const commands = merged.map((command) => ({
           name: command.nativeName as string,
-          description: command.description,
+          // Discord 命令描述上限 100 字符（openclaw truncateDiscordCommandDescription 语义）
+          description: truncateDiscordCommandDescription(command.description),
           options: buildDiscordCommandOptions(command),
         }));
         try {
@@ -413,9 +433,14 @@ export default function (pi: ExtensionAPI) {
             `${TAG} 已注册 ${commands.length} 个 slash 命令（本地 ${getCommands().length} + 动态 ${dynamic.length}）`,
           );
         } catch (error) {
+          const detail =
+            error instanceof Error && "body" in error
+              ? JSON.stringify((error as { body?: unknown }).body)
+              : undefined;
           console.error(
             `${TAG} slash 命令注册失败：`,
             error instanceof Error ? error.message : String(error),
+            detail ? `${detail}` : "",
           );
         }
       })();
