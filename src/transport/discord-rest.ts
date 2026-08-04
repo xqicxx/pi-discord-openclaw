@@ -132,4 +132,14 @@ export class DiscordRest {
   async sendChannelTyping(channelId: Snowflake): Promise<void> {
     await this.request("PUT", `/channels/${channelId}/typing`);
   }
+
+  /** PUT /channels/{id}/messages/{mid}/reactions/{emoji}/@me — 添加 reaction（ack/status）。 */
+  async createChannelReaction(channelId: Snowflake, messageId: Snowflake, emoji: string): Promise<void> {
+    await this.request("PUT", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
+  }
+
+  /** DELETE /channels/{id}/messages/{mid}/reactions/{emoji}/@me — 移除 reaction。 */
+  async deleteChannelReaction(channelId: Snowflake, messageId: Snowflake, emoji: string): Promise<void> {
+    await this.request("DELETE", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
+  }
 }

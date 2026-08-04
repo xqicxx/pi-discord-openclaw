@@ -23,6 +23,12 @@ import {
   type OpenclawStyleConfig,
 } from "./src/config.ts";
 import { DiscordRest } from "./src/transport/discord-rest.ts";
+import {
+  createDiscordReactionAdapter,
+  createStatusReactionController,
+  queueInitialAckReaction,
+  type StatusReactionController,
+} from "./src/feedback/ack-reactions.ts";
 import { DiscordGateway } from "./src/transport/discord-gateway.ts";
 import { OpenclawBridge, type DiscordDelivery } from "./src/dispatch/dispatch.ts";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -116,7 +122,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // 入站：Gateway MESSAGE_CREATE → 过滤 → debounce → pi
+  // 入站：Gateway MESSAGE_CREATE → 过滤 → ack(👀) → debounce → pi
+  let statusReactions: StatusReactionController | undefined;
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -126,6 +133,10 @@ export default function (pi: ExtensionAPI) {
     if (!content) return;
     if (conn.channels?.length && !conn.channels.includes(channelId)) return;
     activeChannelId = channelId;
+    // 笔记 17：收到消息立即加 👀 ack；绑定状态控制器到该消息
+    const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
+    statusReactions = createStatusReactionController(adapter);
+    void queueInitialAckReaction({ adapter });
     bridge.pushUserMessage(content, channelId);
   });
 
@@ -137,6 +148,7 @@ export default function (pi: ExtensionAPI) {
   // 出站：pi 事件 → lanes（与 openclaw 的 turn 生命周期对齐）
   pi.on("agent_start", () => {
     bridge.beginTurn({ chatId: activeChannelId ?? "default" });
+    void statusReactions?.setThinking();
   });
   pi.on("message_update", (event) => {
     const adapted = adaptPiAssistantEvent(event.assistantMessageEvent);
@@ -149,6 +161,7 @@ export default function (pi: ExtensionAPI) {
       name: event.toolName,
       args: event.args as Record<string, unknown> | undefined,
     });
+    void statusReactions?.setTool();
   });
   pi.on("tool_execution_update", (event) => {
     bridge.handleActivity({
@@ -166,6 +179,8 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_end", () => {
     void bridge.endTurn();
+    // 笔记 17：完成 → ✅（失败路径由 gateway error/fatal 处理 ❌）
+    void statusReactions?.setDone();
   });
 
   // 连接 Gateway
