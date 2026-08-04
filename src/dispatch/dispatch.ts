@@ -29,10 +29,10 @@ export interface OpenclawBridgeConfig {
   debounceMs: number;
 }
 
-export interface TelegramDelivery {
-  sendMessage: (text: string) => Promise<number>;
-  editMessage: (messageId: number, text: string) => Promise<void>;
-  deleteMessage: (messageId: number) => Promise<void>;
+export interface DiscordDelivery {
+  sendMessage: (text: string) => Promise<string>;
+  editMessage: (messageId: string, text: string) => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
   sendChatAction: (action: "typing") => Promise<void>;
 }
 
@@ -52,8 +52,8 @@ export class TurnManager {
 
   constructor(params: {
     chatId: string;
-    messageId?: number;
-    delivery: TelegramDelivery;
+    messageId?: string;
+    delivery: DiscordDelivery;
     config: OpenclawBridgeConfig;
   }) {
     this.chatId = params.chatId;
@@ -151,11 +151,11 @@ export type OpenclawActivityEvent =
  */
 export class OpenclawBridge {
   private config: OpenclawBridgeConfig;
-  private delivery: TelegramDelivery;
+  private delivery: DiscordDelivery;
   private turn: TurnManager | undefined;
   private debouncer: InboundDebouncer;
 
-  constructor(params: { delivery: TelegramDelivery; config: OpenclawBridgeConfig }) {
+  constructor(params: { delivery: DiscordDelivery; config: OpenclawBridgeConfig }) {
     this.delivery = params.delivery;
     this.config = params.config;
     this.debouncer = new InboundDebouncer({
@@ -181,7 +181,7 @@ export class OpenclawBridge {
   }
 
   /** 开始新 turn（agent-start）。 */
-  beginTurn(params: { chatId: string; messageId?: number }): TurnManager {
+  beginTurn(params: { chatId: string; messageId?: string }): TurnManager {
     // 笔记 05: isDispatchSuperseded — 新消息取代旧 turn
     if (this.turn && !this.turn.isSuperseded()) {
       this.turn.supersede();

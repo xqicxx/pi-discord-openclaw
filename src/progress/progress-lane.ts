@@ -86,36 +86,33 @@ export function removeProgressLine(lines: ProgressLine[], id: string): ProgressL
 /** 进度行渲染为 HTML（笔记 03: renderTelegramProgressLine）。 */
 export function renderProgressLine(line: ProgressLine): string {
   if (!line.icon && (!line.label || line.label === "Commentary")) {
-    return escapeHtml(line.text);
+    return escapeDiscordMarkdown(line.text);
   }
   const label = [line.icon, line.label].filter(Boolean).join(" ");
-  const parts = [`<b>${escapeHtml(label)}</b>`];
+  const parts = [`**${escapeDiscordMarkdown(label)}**`];
   const detail = line.detail && line.detail !== line.label ? line.detail : undefined;
   if (detail) {
-    parts.push(`<code>${escapeHtml(clipTelegramProgressText(detail))}</code>`);
+    parts.push(`\`${escapeDiscordMarkdown(clipTelegramProgressText(detail))}\``);
   } else {
     const text = line.text.trim();
     if (text && text !== label) {
-      parts.push(`<code>${escapeHtml(clipTelegramProgressText(text))}</code>`);
+      parts.push(`\`${escapeDiscordMarkdown(clipTelegramProgressText(text))}\``);
     }
   }
   if (line.status && line.status !== "completed" && line.status !== line.detail) {
-    parts.push(`<i>${escapeHtml(line.status)}</i>`);
+    parts.push(`*${escapeDiscordMarkdown(line.status)}*`);
   }
   return parts.join(" ");
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+/** Discord Markdown 转义（` * _ [ ] 需转义；保留换行）。 */
+export function escapeDiscordMarkdown(text: string): string {
+  return text.replace(/([\\`*_\[\]])/g, "\\$1");
 }
 
 /** 整个进度草稿渲染（多行 <br>）。 */
 export function renderProgressDraft(lines: ProgressLine[]): string {
-  return lines.map(renderProgressLine).join("<br>");
+  return lines.map(renderProgressLine).join("\n");
 }
 
 export interface ProgressLaneOptions {
@@ -200,7 +197,7 @@ export class ProgressLane {
     if (!this.draft) return;
     const preview: DraftPreview = {
       text: renderProgressDraft(this.lines),
-      parseMode: "HTML",
+      parseMode: "Markdown",
     };
     this.draft.updatePreview(preview);
   }
@@ -210,7 +207,7 @@ export class ProgressLane {
     if (this.lines.some((l) => l.status === "running")) {
       this.render();
     } else if (this.lines.length > 0) {
-      this.draft?.updatePreview({ text: `✅ ${this.lines.length} 个工具调用完成`, parseMode: "HTML" });
+      this.draft?.updatePreview({ text: `✅ ${this.lines.length} 个工具调用完成`, parseMode: "Markdown" });
     }
   }
 }

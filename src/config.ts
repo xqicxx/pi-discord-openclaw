@@ -26,33 +26,33 @@ export interface OpenclawStyleConfig {
 
 export const DEFAULTS: OpenclawStyleConfig = {
   enabled: true,
-  streaming: { mode: "progress", throttleMs: 1000, chunkSize: 3800 },
+  streaming: { mode: "progress", throttleMs: 1200, chunkSize: 1900 },
   reasoning: { enabled: true, style: "emoji-italic" },
   toolProgress: { enabled: true, maxLines: 8 },
   inbound: { debounceMs: 1000 },
 };
 
 /**
- * Load config from telegram.json's `openclawStyle` section (per profile).
+ * Load config from discord.json's `openclawStyle` section.
  * Falls back to defaults; tolerant of partial configs.
  */
-/** 依次解析 telegram.json 候选路径：PI_CODING_AGENT_DIR → ~/.pi/agent → HOME。 */
-function resolveTelegramJsonPath(): string {
+/** 依次解析 discord.json 候选路径：PI_CODING_AGENT_DIR → ~/.pi/agent → HOME。 */
+function resolveDiscordJsonPath(): string {
   const os = require("node:os");
   const path = require("node:path");
   const candidates: string[] = [];
   if (process.env.PI_CODING_AGENT_DIR) {
-    candidates.push(path.join(process.env.PI_CODING_AGENT_DIR, "telegram.json"));
+    candidates.push(path.join(process.env.PI_CODING_AGENT_DIR, "discord.json"));
   }
-  candidates.push(path.join(os.homedir(), ".pi", "agent", "telegram.json"));
-  if (process.env.HOME) candidates.push(path.join(process.env.HOME, "telegram.json"));
+  candidates.push(path.join(os.homedir(), ".pi", "agent", "discord.json"));
+  if (process.env.HOME) candidates.push(path.join(process.env.HOME, "discord.json"));
   return candidates[0];
 }
 
 export function loadOpenclawStyleConfig(): OpenclawStyleConfig {
   try {
     const fs = require("node:fs");
-    const p = resolveTelegramJsonPath();
+    const p = resolveDiscordJsonPath();
     if (fs.existsSync(p)) {
       const raw = JSON.parse(fs.readFileSync(p, "utf8"));
       const ocs = raw?.openclawStyle ?? raw?.["openclaw-style"];
@@ -63,13 +63,13 @@ export function loadOpenclawStyleConfig(): OpenclawStyleConfig {
 }
 
 /**
- * 仅当 telegram.json 明确配置 openclawStyle.enabled: true 时启用。
- * fork 入口默认关闭（与上游行为一致），避免 DEFAULTS.enabled 误启用。
+ * 仅当 discord.json 明确配置 openclawStyle.enabled: true 时启用。
+ * 入口默认关闭（与上游行为一致），避免 DEFAULTS.enabled 误启用。
  */
 export function isOpenclawStyleEnabled(): boolean {
   try {
     const fs = require("node:fs");
-    const p = resolveTelegramJsonPath();
+    const p = resolveDiscordJsonPath();
     if (!fs.existsSync(p)) return false;
     const raw = JSON.parse(fs.readFileSync(p, "utf8"));
     return (raw as { openclawStyle?: { enabled?: boolean } }).openclawStyle?.enabled === true;
@@ -88,4 +88,36 @@ function deepMerge<T>(base: T, patch: Partial<T>): T {
     }
   }
   return out as T;
+}
+
+// ---- Discord 连接配置 ----
+
+export interface DiscordConnectionConfig {
+  /** Bot token：环境变量 DISCORD_BOT_TOKEN 或 discord.json 的 token。 */
+  token?: string;
+  /** 允许处理的 channel id 列表；空数组 = 全部频道。 */
+  channels?: string[];
+  /** 忽略 bot 自己的消息（默认 true）。 */
+  ignoreBots?: boolean;
+}
+
+export function loadDiscordConnectionConfig(): DiscordConnectionConfig {
+  const envToken = process.env.DISCORD_BOT_TOKEN?.trim();
+  try {
+    const fs = require("node:fs");
+    const p = resolveDiscordJsonPath();
+    if (fs.existsSync(p)) {
+      const raw = JSON.parse(fs.readFileSync(p, "utf8")) as {
+        token?: string;
+        channels?: string[];
+        ignoreBots?: boolean;
+      };
+      return {
+        token: envToken || raw.token?.trim(),
+        channels: raw.channels,
+        ignoreBots: raw.ignoreBots ?? true,
+      };
+    }
+  } catch { /* fall through */ }
+  return { token: envToken, channels: undefined, ignoreBots: true };
 }

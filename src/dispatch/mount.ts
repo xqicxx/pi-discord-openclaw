@@ -2,14 +2,14 @@
 // 解耦：不修改 lib/ 内部，只在 index.ts 调用 mountOpenclawBridge(activityRuntime, deps)。
 // 开关：telegram.json 的 openclawStyle.enabled（默认 false，保持上游行为）。
 
-import { OpenclawBridge, type TelegramDelivery } from "./dispatch.ts";
+import { OpenclawBridge, type DiscordDelivery } from "./dispatch.ts";
 import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activity-adapter.ts";
 
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
 export interface MountDeps {
-  sendMessage: (text: string) => Promise<number>;
-  editMessageText: (messageId: number, text: string) => Promise<void>;
-  deleteMessage: (messageId: number) => Promise<void>;
+  sendMessage: (text: string) => Promise<string>;
+  editMessageText: (messageId: string, text: string) => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
   sendChatAction: (action: "typing") => Promise<void>;
 }
 
@@ -43,7 +43,7 @@ export function mountOpenclawBridge(
   activityRuntime: MountActivityRuntime,
   deps: MountDeps,
 ): MountResult | undefined {
-  const delivery: TelegramDelivery = {
+  const delivery: DiscordDelivery = {
     sendMessage: deps.sendMessage,
     editMessage: deps.editMessageText,
     deleteMessage: deps.deleteMessage,

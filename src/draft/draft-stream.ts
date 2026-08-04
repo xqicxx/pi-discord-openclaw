@@ -16,7 +16,7 @@ const MIN_THROTTLE_MS = 250;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_PREVIEW_FLOOD_SUSPEND_MS = 60_000;
 const MIN_PREVIEW_DWELL_MS = 4_000;
-const DEFAULT_CHUNK_SIZE = 3800;
+const DEFAULT_CHUNK_SIZE = 1900; // Discord 2000 上限留余量
 
 export interface DraftStreamOptions {
   throttleMs?: number;
@@ -28,9 +28,9 @@ export interface DraftStreamOptions {
 }
 
 export interface DraftTransport {
-  sendMessage: (text: string) => Promise<number>;
-  editMessage: (messageId: number, text: string) => Promise<void>;
-  deleteMessage: (messageId: number) => Promise<void>;
+  sendMessage: (text: string) => Promise<string>;
+  editMessage: (messageId: string, text: string) => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
   sendChatAction: (action: "typing") => Promise<void>;
 }
 
@@ -72,11 +72,11 @@ export class DraftStream {
   private transport: DraftTransport;
   private pendingText = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private streamMessageId: number | undefined;
+  private streamMessageId: string | undefined;
   private deliveredText = "";
   private failures = 0;
   private stopped = false;
-  private previewMessageId: number | undefined;
+  private previewMessageId: string | undefined;
   private previewText = "";
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
@@ -86,7 +86,7 @@ export class DraftStream {
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.minInitialChars = options.minInitialChars ?? 0;
     this.transport = options.transport ?? {
-      sendMessage: async () => 0,
+      sendMessage: async () => "",
       editMessage: async () => {},
       deleteMessage: async () => {},
       sendChatAction: async () => {},
@@ -189,7 +189,7 @@ export class DraftStream {
     }
   }
 
-  messageId(): number | undefined {
+  messageId(): string | undefined {
     return this.streamMessageId;
   }
 

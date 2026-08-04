@@ -29,8 +29,8 @@ function assert(cond, label) {
 {
   const line = buildToolProgressLine({ event: 'tool', toolCallId: 't1', name: 'exec_command', phase: 'start', args: { cmd: 'ls' } });
   const html = renderProgressLine(line);
-  assert(html.includes('<b>'), '含 <b> 加粗');
-  assert(html.includes('<code>'), '含 <code> 代码块');
+  assert(html.includes('**'), '含 ** 加粗');
+  assert(html.includes('`'), '含 ` 代码块');
   assert(html.includes('running'), '含 running 状态');
 }
 
@@ -68,7 +68,7 @@ function assert(cond, label) {
   lane.beginTurn();
   lane.onToolStart({ id: 't1', name: 'exec_command', args: { cmd: 'ls' } });
   assert(previews.length === 1, 'start → 渲染一次');
-  assert(previews[0].includes('exec_command'), 'start 渲染含工具名');
+  assert(previews[0].includes('exec\\_command'), 'start 渲染含工具名（下划线已转义）');
   lane.onToolUpdate({ id: 't1', detail: 'progress 50%' });
   assert(previews.length === 2, 'update → 渲染第二次');
   lane.onToolEnd({ id: 't1', ok: true });
