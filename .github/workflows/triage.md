@@ -21,11 +21,9 @@ engine:
 # 本 workflow 常跑，用小模型省成本
 
 safe-outputs:
-  add-labels:
+  update-issue:
     max: 5
   add-comment:
-    max: 1
-  set-issue-type:
     max: 1
   close-issue:
     target: "triggering"
@@ -127,8 +125,7 @@ Assess whether the issue is suitable for automated coding agent assignment:
 ## Step 4: Apply results
 
 Apply all triage results:
-- Use `set_issue_type` to set the issue type (if determined).
-- Use `update_issue` to apply labels.
+- Use `update_issue` to set the issue type and apply labels.
 - **值不值得修判定（本仓库核心约定）**：
   - 判定 `worth-fixing`：打 `worth-fixing` 标签 → 自动触发 AI 修复流程。
   - 判定 `wontfix`：打 `wontfix` 标签，并 close issue（state reason: "not planned"），评论说明理由。
