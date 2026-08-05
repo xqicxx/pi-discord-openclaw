@@ -41,6 +41,8 @@ export interface OpenclawBridgeConfig {
   formatAnswerText?: (text: string) => string;
   /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），超时 abort 当前 turn。 */
   turnWatchdogMs?: number;
+  /** 笔记 28：工具超时连续次数阈值，超过则强制 abort turn（防模型重试循环）。 */
+  maxToolTimeouts?: number;
 }
 
 export interface DiscordDelivery {
@@ -180,6 +182,7 @@ export type OpenclawActivityEvent =
  * - 提供连续输入 debounce
  * - 复用 lane 实现（解耦）
  * - 笔记 27：turn 级 watchdog——连续无活动超时 abort
+ * - 笔记 28：工具超时连续次数检测——超过阈值强制 abort（防模型重试循环）
  */
 export class OpenclawBridge {
   private config: OpenclawBridgeConfig;
@@ -188,6 +191,7 @@ export class OpenclawBridge {
   private debouncer: InboundDebouncer;
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
   private lastActivityAt = 0;
+  private consecutiveToolTimeouts = 0;
 
   constructor(params: { delivery: DiscordDelivery; config: OpenclawBridgeConfig }) {
     this.delivery = params.delivery;
@@ -227,6 +231,7 @@ export class OpenclawBridge {
       config: this.config,
     });
     this.lastActivityAt = Date.now();
+    this.consecutiveToolTimeouts = 0;
     this.startWatchdog();
     return this.turn;
   }
@@ -271,6 +276,15 @@ export class OpenclawBridge {
     if (this.watchdogTimer) {
       clearTimeout(this.watchdogTimer);
       this.watchdogTimer = undefined;
+    }
+  }
+
+  /** 笔记 28：工具超时检测——连续超时超过阈值则强制 abort。 */
+  onToolTimeout(): void {
+    this.consecutiveToolTimeouts += 1;
+    const max = this.config.maxToolTimeouts ?? 3;
+    if (this.consecutiveToolTimeouts >= max && this.turn && !this.turn.isSuperseded()) {
+      void this.abortTurn(`工具连续超时 ${this.consecutiveToolTimeouts} 次，已中止当前任务（请换用短轮询或减少等待时间）`);
     }
   }
 
