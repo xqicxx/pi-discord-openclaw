@@ -108,6 +108,32 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   return out.join("\n");
 }
 
+/**
+ * markdown 表格 → Discord Embed fields（每行一个 field，name=第一列，value=其余列）。
+ * 返回 null 表示无表格或表格过大（超过 25 fields 或单格超 1024 字符）。
+ */
+export function convertMarkdownTableToEmbed(markdown: string): { embeds: unknown[] } | null {
+  const lines = markdown.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+      for (const row of block.rows) {
+        if (fields.length >= 25) return null;
+        const name = row[0] ?? "";
+        const value = row.slice(1).join(" | ");
+        if (name.length > 256 || value.length > 1024) return null;
+        fields.push({ name, value, inline: true });
+      }
+      if (fields.length === 0) return null;
+      return { embeds: [{ title: block.headers.join(" | "), fields }] };
+    }
+    i += 1;
+  }
+  return null;
+}
+
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----
 
 const AUDIO_TAG_RE = /\[\[\s*audio_as_voice\s*\]\]/gi;
