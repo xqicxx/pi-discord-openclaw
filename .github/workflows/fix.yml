@@ -20,7 +20,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          python3 - <<PYEOF
+          python3 - <<'PYEOF'
           import json, os, subprocess, urllib.request
 
           repo = os.environ['REPO']

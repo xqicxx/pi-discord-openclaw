@@ -18,7 +18,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          python3 - <<PYEOF
+          python3 - <<'PYEOF'
           import json, os, subprocess, time
 
           repo = os.environ['REPO']
