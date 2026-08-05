@@ -621,7 +621,8 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
-    bridge.beginTurn({ chatId: activeChannelIds.get(ctx.chatId ?? "default") ?? "default" });
+    const chatId = activeChannelIds.get(ctx.chatId ?? "default") ?? "default";
+    bridge.beginTurn({ chatId });
     void statusReactions?.setThinking();
   });
   pi.on("message_update", (event, ctx) => {
