@@ -6,6 +6,20 @@ const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RATE_LIMIT_RETRIES = 3;
 
+/** Discord embed 字段定义（最小化，支持表格模拟）。 */
+export interface DiscordEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+/** Discord embed 对象（最小化）。 */
+export interface DiscordEmbed {
+  title?: string;
+  description?: string;
+  fields?: DiscordEmbedField[];
+}
+
 /** Discord 错误（含 code/message/完整 body——body.errors 指明非法字段）。 */
 export class DiscordApiError extends Error {
   readonly status: number;
@@ -120,7 +134,7 @@ export class DiscordRest {
   /** POST /channels/{id}/messages — 发送消息（返回 message id）。 */
   async createChannelMessage(
     channelId: Snowflake,
-    options: { content: string; embeds?: unknown[]; message_reference?: { message_id: string; fail_if_not_exists?: boolean } },
+    options: { content: string; embeds?: DiscordEmbed[]; message_reference?: { message_id: string; fail_if_not_exists?: boolean } },
   ): Promise<DiscordCreatedMessage> {
     return this.request<DiscordCreatedMessage>("POST", `/channels/${channelId}/messages`, options);
   }

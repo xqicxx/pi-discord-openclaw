@@ -3,7 +3,6 @@
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
 // 2. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
 // 3. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
-// 4. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（模拟表格）
 
 /** Discord 单条消息字符上限（openclaw DISCORD_TEXT_CHUNK_LIMIT）。 */
 export const DISCORD_TEXT_CHUNK_LIMIT = 2000;
@@ -224,30 +223,30 @@ export function chunkDiscordText(text: string, maxChars: number = DISCORD_TEXT_C
   return chunks;
 }
 
-// ---- markdown 表格 → Discord Embed fields（模拟表格） ----
-
-/** Discord Embed field 结构（name/value 均 ≤1024 字符，每 embed ≤25 fields）。 */
-export interface DiscordEmbedField {
-  name: string;
-  value: string;
-  inline?: boolean;
-}
+// ---- Discord Embed 表格转换（Issue #59） ----
 
 /**
- * 将 markdown 表格转换为 Discord Embed fields（每行一个 field，name 为行号，value 为 "| 单元格 | ... |"）。
- * 若输入不是表格，返回 null。
+ * 将 markdown 表格转换为 Discord Embed（fields 模拟表格）。
+ * 若输入不含表格，返回 null。
+ * 转换逻辑：表头为字段名，每列的所有单元格用换行连接作为字段值。
  */
-export function convertMarkdownTableToEmbed(markdown: string): { fields: DiscordEmbedField[] } | null {
+export function markdownTableToEmbed(markdown: string): {
+  title?: string;
+  description?: string;
+  fields: Array<{ name: string; value: string; inline?: boolean }>;
+} | null {
   if (!markdown) return null;
   const lines = markdown.split("\n");
-  const block = parseTableBlock(lines, 0);
-  if (!block) return null;
-  const fields: DiscordEmbedField[] = [];
-  const headerValue = "| " + block.headers.join(" | ") + " |";
-  fields.push({ name: "Header", value: headerValue, inline: false });
-  block.rows.forEach((row, idx) => {
-    const value = "| " + row.join(" | ") + " |";
-    fields.push({ name: `Row ${idx + 1}`, value, inline: false });
-  });
-  return { fields };
+  // 查找第一个表格块（从任意行开始，但简化为从头找）
+  for (let i = 0; i < lines.length; i++) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields = block.headers.map((header, col) => {
+        const values = block.rows.map(row => row[col] ?? "");
+        return { name: header, value: values.join("\n") };
+      });
+      return { fields };
+    }
+  }
+  return null;
 }
