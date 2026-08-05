@@ -211,6 +211,9 @@ export class OpenclawBridge {
 
   /** 用户消息注入回调（由宿主设置：pi / omp）。 */
   onUserInput?: (text: string) => Promise<void>;
+  /** 宿主中断回调（笔记 28）：abortTurn/abortCurrentTurn 时真正中断 agent（pi ctx.abort()），
+   *  否则只清 bridge 状态，agent 还在跑（「超时但没停止」）。 */
+  onAbort?: () => void;
 
   /** 用户发消息 → debounce 合并（笔记 04）。 */
   pushUserMessage(text: string, chatId: string): void {
@@ -292,6 +295,12 @@ export class OpenclawBridge {
     if (!turn) return;
     this.clearWatchdog();
     this.turn = undefined;
+    // 笔记 28：真正中断 agent（宿主注入 ctx.abort()），否则任务还在后台跑
+    try {
+      this.onAbort?.();
+    } catch {
+      // 忽略中断失败
+    }
     try {
       await this.delivery.sendMessage(turn.chatId, reason);
     } catch {
@@ -303,6 +312,20 @@ export class OpenclawBridge {
     } catch {
       // 忽略清理失败
     }
+  }
+
+  /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。 */
+  async abortCurrentTurn(reason = "已中止当前任务。"): Promise<void> {
+    if (!this.turn && this.debouncer) {
+      // 无活动 turn 时仍回复确认
+      try {
+        this.onAbort?.();
+      } catch {
+        // 忽略
+      }
+      return;
+    }
+    await this.abortTurn(reason);
   }
 
   /** 连续工具超时检测：超过阈值强制 abort turn。 */

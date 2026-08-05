@@ -72,6 +72,36 @@ import {
 
 const TAG = "[pi-discord-openclaw]";
 
+// 笔记 28：abort 触发词（移植 openclaw abort-primitives.ts ABORT_TRIGGERS）——
+// 用户发「停止/暂停/stop/abort」等时直接中断当前任务，不进 agent。
+const ABORT_TRIGGERS = new Set([
+  "stop", "esc", "abort", "exit", "interrupt", "halt",
+  "detente", "deten", "detén", "arrete", "arrête",
+  "停止", "停下来", "暂停", "やめて", "止めて", "रुको", "توقف",
+  "стоп", "остановись", "останови", "остановить", "прекрати",
+  "anhalten", "aufhören", "hoer auf", "stopp", "pare",
+  "stop openclaw", "openclaw stop", "stop action", "stop current action",
+  "stop run", "stop current run", "stop agent", "stop the agent",
+  "stop don't do anything", "stop dont do anything",
+  "stop do not do anything", "stop doing anything",
+  "do not do that", "please stop", "stop please",
+]);
+const TRAILING_ABORT_PUNCTUATION_RE = /[.!?！？…,，。;；:：'"’”)]}]+$/u;
+
+/** 归一化触发词（小写、去尾部标点、空白折叠）。 */
+function normalizeAbortTriggerText(text: string): string {
+  return (text ?? "").toLowerCase().replace(/s+/g, " ").replace(TRAILING_ABORT_PUNCTUATION_RE, "").trim();
+}
+
+/** 是否 abort 触发消息（openclaw isAbortRequestText 语义：/stop 或触发词）。 */
+function isAbortRequestText(text: string): boolean {
+  if (!text) return false;
+  const normalized = text.trim();
+  const lower = normalized.toLowerCase();
+  if (lower === "/stop") return true;
+  return ABORT_TRIGGERS.has(normalizeAbortTriggerText(lower));
+}
+
 /** 延迟（openclaw sleep；表情终态 hold 用）。 */
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -529,6 +559,20 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    // 笔记 28：abort 触发词拦截（openclaw abort-primitives）——用户发
+    // 「停止/暂停/stop/abort」等 → 中断当前任务，不进 agent
+    if (isAbortRequestText(content)) {
+      void (async () => {
+        try {
+          await bridge.abortCurrentTurn("🛑 已中止当前任务。");
+        } catch {
+          // 忽略
+        }
+        await replyTextCommand(channelId, "🛑 已中止当前任务。");
+      })();
+      return;
+    }
+
     // 动态命令文本形式（pi 内置/扩展命令，无本地 handler）→ 提示终端执行
     if (content.startsWith("/") && mergedCommands) {
       const match = content.match(/^\/([a-z0-9-_]+)/i);
@@ -583,6 +627,14 @@ export default function (pi: ExtensionAPI) {
   bridge.onUserInput = async (text) => {
     // 触发 pi turn；若正在流式输出则排队为 followUp
     pi.sendUserMessage(text, { deliverAs: "followUp" });
+  };
+  // 笔记 28：watchdog/触发词中断时真正停止 pi agent（否则任务还在后台跑）
+  bridge.onAbort = () => {
+    try {
+      commandCtx?.abort();
+    } catch {
+      // 忽略中断失败
+    }
   };
 
   // 出站：pi 事件 → lanes（与 openclaw 的 turn 生命周期对齐）；同时捕获命令 ctx
