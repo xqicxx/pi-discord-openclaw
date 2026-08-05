@@ -26,6 +26,11 @@ tools:
   github:
     toolsets: [issues, pull_requests, repos]
     min-integrity: none
+    read-tools:
+      - get_issue
+      - list_comments
+      - get_repository
+      - list_branches
 
 timeout-minutes: 30
 ---
