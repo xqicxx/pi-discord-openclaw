@@ -4,6 +4,7 @@
 
 import type { DiscordRest } from "../transport/discord-rest.ts";
 import type { MountDeps } from "./mount.ts";
+import { convertMarkdownTableToEmbed } from "./markdown-tables.ts";
 
 /** 把 DiscordRest + channelId 解析器适配成 MountDeps。 */
 export function createDiscordMountDeps(
@@ -21,7 +22,8 @@ export function createDiscordMountDeps(
   return {
     sendMessage: async (text) => {
       const channelId = await resolveChannelId();
-      const sent = await rest.createChannelMessage(channelId, { content: text });
+      const embeds = convertMarkdownTableToEmbed(text);
+      const sent = await rest.createChannelMessage(channelId, { content: text, embeds });
       if (!sent.id) {
         throw new Error("discord sendMessage: no message id in response");
       }
