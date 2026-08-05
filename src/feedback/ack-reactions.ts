@@ -195,9 +195,14 @@ export function createStatusReactionController(params: StatusReactionControllerO
   async function applyEmoji(newEmoji: string): Promise<void> {
     if (!enabled) return;
     try {
-      if (!activeEmojis.has(newEmoji)) {
-        await adapter.setReaction(newEmoji);
+      // 笔记 30：单表情替换式——消息上始终只显示当前状态（⏳→👀→🧠→🛠️→✅），
+      // 切换时先移除旧表情，避免叠加/残留（「没思考却挂着思考标签」）。
+      if (activeEmojis.has(newEmoji) && activeEmojis.size === 1) {
+        currentEmoji = newEmoji;
+        return; // 已是当前唯一表情，无需操作
       }
+      await removeActiveEmojis();
+      await adapter.setReaction(newEmoji);
       activeEmojis.add(newEmoji);
       currentEmoji = newEmoji;
     } catch (err) {
