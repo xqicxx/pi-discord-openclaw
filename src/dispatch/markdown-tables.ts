@@ -1,9 +1,8 @@
 // Discord 输出格式化 — 原生移植 openclaw（笔记 24）。
 // 1. convertMarkdownTables：markdown 表格 → 对齐 ASCII 表格 + 代码块包裹
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
-// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（Issue #59）
-// 3. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
-// 4. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
+// 2. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
+// 3. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
 
 /** Discord 单条消息字符上限（openclaw DISCORD_TEXT_CHUNK_LIMIT）。 */
 export const DISCORD_TEXT_CHUNK_LIMIT = 2000;
@@ -109,15 +108,12 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   return out.join("\n");
 }
 
-// ---- Discord Embed fields 表格转换（Issue #59） ----
-
 /**
- * 将 markdown 文本中的表格转换为 Discord Embed fields。
- * 返回 { content, embeds }：content 保留非表格文本，embeds 包含每个表格的字段。
- * 循环处理所有表格，避免只处理第一个导致内容丢失。
+ * markdown 表格 → Discord Embed fields（tableMode "embed"）。
+ * 每个数据行映射为一个 field：name = 第一列值，value = 其余列用 ` | ` 连接。
+ * 表头作为 embed title。非表格内容原样保留在 content 中。
  */
-export function convertMarkdownTableToEmbed(markdown: string): { content: string; embeds: unknown[] } {
-  if (!markdown) return { content: markdown, embeds: [] };
+export function convertMarkdownTablesToEmbed(markdown: string): { content: string; embeds: unknown[] } {
   const lines = markdown.split("\n");
   const contentParts: string[] = [];
   const embeds: unknown[] = [];
@@ -125,15 +121,12 @@ export function convertMarkdownTableToEmbed(markdown: string): { content: string
   while (i < lines.length) {
     const block = parseTableBlock(lines, i);
     if (block) {
-      // 将表格转换为 embed fields
-      const fields = [];
-      // 表头作为字段名，每行数据作为字段值（简化：每行一个字段，名称为第一列，值为其余列）
-      for (const row of block.rows) {
-        const name = row[0] ?? "";
-        const value = row.slice(1).join(" | ") || "—";
-        fields.push({ name, value, inline: true });
-      }
-      embeds.push({ fields });
+      const fields = block.rows.map((row) => ({
+        name: row[0] ?? "",
+        value: row.slice(1).join(" | ") || "\u200b",
+        inline: true,
+      }));
+      embeds.push({ title: block.headers.join(" | "), fields });
       i += 2 + block.rows.length;
     } else {
       contentParts.push(lines[i]);
