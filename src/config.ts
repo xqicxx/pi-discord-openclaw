@@ -37,6 +37,16 @@ export interface OpenclawStyleConfig {
   inbound: {
     debounceMs: number;
   };
+  /** 笔记 23：状态表情（openclaw messages.statusReactions）。 */
+  statusReactions?: {
+    enabled?: boolean;
+    /** 完成/错误后是否移除全部表情（openclaw removeAckAfterReply，默认 true）。 */
+    removeAckAfterReply?: boolean;
+    /** 表情覆盖（按分类，openclaw statusReactions.emojis）。 */
+    emojis?: Partial<Record<"queued" | "thinking" | "tool" | "coding" | "web" | "deploy" | "build" | "concierge" | "done" | "error" | "stallSoft" | "stallHard" | "compacting", string>>;
+    /** 时序覆盖（openclaw statusReactions.timing）。 */
+    timing?: Partial<Record<"debounceMs" | "stallSoftMs" | "stallHardMs" | "doneHoldMs" | "errorHoldMs", number>>;
+  };
 }
 
 export const DEFAULTS: OpenclawStyleConfig = {
@@ -55,6 +65,7 @@ export const DEFAULTS: OpenclawStyleConfig = {
   reasoning: { enabled: true, style: "emoji-italic" },
   toolProgress: { enabled: true, maxLines: 8 },
   inbound: { debounceMs: 1000 },
+  statusReactions: { enabled: true, removeAckAfterReply: true },
 };
 
 /**

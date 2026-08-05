@@ -2,6 +2,7 @@
 import {
   loadPiBuiltinCommands,
   collectPiRuntimeCommands,
+  filterDiscordRegisterableCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
   sanitizeDiscordCommandName,
@@ -80,5 +81,37 @@ function assert(cond, label) {
   assert(findMergedCommandByNativeName(merged, 'nope') === undefined, '未知命令 undefined');
 }
 
+
+// 6. 注册过滤器（笔记 25 修复）：skill 不注册 Discord + 100 上限保底
+{
+  const fakePi = {
+    getCommands: () => [
+      { name: 'my-tool', description: 'A custom tool', source: 'extension', sourceInfo: {} },
+      { name: 'tpl-demo', description: 'A prompt template', source: 'prompt', sourceInfo: {} },
+      { name: 'skill:foo', description: 'Skill foo', source: 'skill', sourceInfo: {} },
+    ],
+  };
+  const dynamic = collectPiRuntimeCommands(fakePi);
+  const merged = mergeCommandSets(buildBuiltinCommands(), dynamic);
+  const registerable = filterDiscordRegisterableCommands(merged);
+  const names = new Set(registerable.map((c) => c.nativeName));
+  assert(names.has('my-tool'), '注册集含扩展命令');
+  assert(names.has('tpl-demo'), '注册集含 prompt 模板');
+  assert(!names.has('skill-foo'), '注册集排除 skill（100 上限 + 需终端）');
+  assert(names.has('models'), '注册集含本地 models');
+  assert(names.has('help') && names.has('status'), '注册集含本地 help/status');
+  assert(registerable.length <= 100, `注册集 ≤100（实际 ${registerable.length}）`);
+
+  // 超 100 时保底截断（本地+builtin 优先，merge 顺序保证）
+  const many = buildBuiltinCommands().concat(
+    Array.from({ length: 120 }, (_, i) => ({
+      key: 'ext' + i, nativeName: 'ext-' + i, description: 'x', textAliases: [], scope: 'native',
+      source: 'extension',
+    })),
+  );
+  const capped = filterDiscordRegisterableCommands(many);
+  assert(capped.length === 100, `超限截断到 100（实际 ${capped.length}）`);
+  assert(capped.some((c) => c.key === 'models'), '截断后本地命令保留');
+}
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0) process.exit(1);

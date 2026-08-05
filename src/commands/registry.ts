@@ -43,6 +43,10 @@ export interface ChatCommandDefinition {
   scope: CommandScope;
   category?: CommandCategory;
   tier?: CommandTier;
+  /** S184：命令来源（pi 动态命令的 extension/prompt/skill 分类），供本地执行路由。 */
+  source?: "extension" | "prompt" | "skill";
+  /** S184：来源文件路径（prompt 模板 / SKILL.md），供本地执行读取内容。 */
+  sourcePath?: string;
 }
 
 /** 解析后的命令参数。 */
@@ -120,6 +124,10 @@ export function defineChatCommand(command: {
   scope?: CommandScope;
   category?: CommandCategory;
   tier?: CommandTier;
+  /** S184：来源（extension/prompt/skill），供本地执行路由。 */
+  source?: "extension" | "prompt" | "skill";
+  /** S184：来源文件路径（prompt 模板 / SKILL.md）。 */
+  sourcePath?: string;
 }): ChatCommandDefinition {
   // openclaw defineBuiltinChatCommand 语义：未显式提供 textAliases 时默认 /key
   const hasExplicitAliases = command.textAliases !== undefined;
@@ -141,6 +149,8 @@ export function defineChatCommand(command: {
     scope,
     category: command.category,
     tier: command.tier,
+    source: command.source,
+    sourcePath: command.sourcePath,
   };
 }
 
@@ -431,9 +441,18 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
     defineChatCommand({
       key: "models",
       nativeName: "models",
-      description: "List all configured models.",
+      description: "List models, or switch to one (e.g. /models provider/model).",
       category: "options",
       tier: "standard",
+      args: [
+        {
+          name: "model",
+          description: "Model id or alias to switch to",
+          type: "string",
+          required: false,
+          captureRemaining: true,
+        },
+      ],
     }),
     defineChatCommand({
       key: "thinking-levels",

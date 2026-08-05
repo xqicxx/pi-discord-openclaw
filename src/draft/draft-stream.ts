@@ -25,6 +25,11 @@ export interface DraftStreamOptions {
   minInitialChars?: number;
   /** Telegram transport: send/edit/delete/chatAction. Injected by the bridge. */
   transport?: DraftTransport;
+  /**
+   * 最终投递前格式化钩子（笔记 24：convertMarkdownTables + stripInlineDirectiveTags）。
+   * 仅对 answer lane 传入；progress 草稿不格式化（进度行是纯文本）。
+   */
+  formatText?: (text: string) => string;
 }
 
 export interface DraftTransport {
@@ -80,11 +85,13 @@ export class DraftStream {
   private previewText = "";
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
+  private formatText?: (text: string) => string;
 
   constructor(options: DraftStreamOptions) {
     this.throttleMs = Math.max(MIN_THROTTLE_MS, options.throttleMs ?? DEFAULT_THROTTLE_MS);
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.minInitialChars = options.minInitialChars ?? 0;
+    this.formatText = options.formatText;
     this.transport = options.transport ?? {
       sendMessage: async () => "",
       editMessage: async () => {},
@@ -153,14 +160,16 @@ export class DraftStream {
       this.scheduleFlush();
       return;
     }
-    const text = this.pendingText;
+    const rawText = this.pendingText;
     this.pendingText = "";
     // 笔记 01: minInitialChars — 未达最小长度不发首条（防推送轰炸）
-    if (this.streamMessageId === undefined && text.length < this.minInitialChars) {
-      this.pendingText = text;
+    if (this.streamMessageId === undefined && rawText.length < this.minInitialChars) {
+      this.pendingText = rawText;
       this.scheduleFlush();
       return;
     }
+    // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
+    const text = this.formatText ? this.formatText(rawText) : rawText;
     const chunks = splitChunks(text, this.chunkSize);
     try {
       if (this.streamMessageId === undefined) {

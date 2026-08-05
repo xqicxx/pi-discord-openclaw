@@ -93,23 +93,35 @@ export async function loadPiBuiltinCommands(): Promise<ChatCommandDefinition[]> 
   return builtinCommandsCache;
 }
 
-/** 收集 pi 动态命令（扩展命令 + prompt 模板；skills 跳过）。 */
+/**
+ * 收集 pi 动态命令（扩展命令 + prompt 模板 + skills，S184 全部注册）。
+ * source/sourcePath 保留用于本地执行路由：
+ * - extension：无本地 handler → 引导终端
+ * - prompt：读取模板内容作为 user message 发送（本地执行模板）
+ * - skill：读取 SKILL.md 内容作为 user message 发送（加载 skill 指令）
+ */
 export function collectPiRuntimeCommands(pi: ExtensionAPI): ChatCommandDefinition[] {
   const commands: ChatCommandDefinition[] = [];
   try {
     for (const info of pi.getCommands()) {
       const name = info.name;
       if (!name) continue;
-      if (info.source === "skill") continue; // 数量多 + 需终端，不注册
-      if (!DISCORD_COMMAND_NAME_RE.test(name)) continue;
+      // S184：skill 命令名形如 skill:xxx（Discord 命令名不允许冒号）→ sanitize
+      const nativeName = DISCORD_COMMAND_NAME_RE.test(name)
+        ? name
+        : sanitizeDiscordCommandName(name);
+      if (!nativeName) continue;
+      const source = info.source === "skill" || info.source === "prompt" ? info.source : "extension";
       commands.push(
         defineChatCommand({
-          key: `pi:ext:${name}`,
-          nativeName: name,
+          key: `pi:${source}:${nativeName}`,
+          nativeName,
           description: info.description ?? "pi command",
           category: "tools",
           tier: "standard",
           scope: "native",
+          source,
+          sourcePath: info.sourceInfo?.path,
         }),
       );
     }
@@ -134,6 +146,17 @@ export function mergeCommandSets(
     if (!byNative.has(name)) byNative.set(name, command);
   }
   return [...byNative.values()];
+}
+
+/**
+ * 过滤 Discord 注册集（笔记 25 修复）：
+ * - 排除 skill 命令（数量多 + 需终端执行；保留在 merged 集供文本 /skill-xxx 本地执行）
+ * - 保底截断 100（Discord 全局命令上限；mergeCommandSets 已保证本地+builtin 在前）
+ */
+export function filterDiscordRegisterableCommands(
+  merged: ChatCommandDefinition[],
+): ChatCommandDefinition[] {
+  return merged.filter((command) => command.source !== "skill").slice(0, 100);
 }
 
 /** 在合并命令集中按原生名查找（本地 handler 优先）。 */

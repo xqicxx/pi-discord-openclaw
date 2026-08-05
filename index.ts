@@ -30,8 +30,13 @@ import {
   createDiscordReactionAdapter,
   createStatusReactionController,
   queueInitialAckReaction,
+  STATUS_TIMING,
   type StatusReactionController,
 } from "./src/feedback/ack-reactions.ts";
+import {
+  convertMarkdownTables,
+  stripInlineDirectiveTagsForDelivery,
+} from "./src/dispatch/markdown-tables.ts";
 import { DiscordGateway } from "./src/transport/discord-gateway.ts";
 import { OpenclawBridge, type DiscordDelivery } from "./src/dispatch/dispatch.ts";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -47,6 +52,7 @@ import {
 } from "./src/commands/options.ts";
 import {
   collectPiRuntimeCommands,
+  filterDiscordRegisterableCommands,
   loadPiBuiltinCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
@@ -61,6 +67,11 @@ import {
 } from "./src/transport/types.ts";
 
 const TAG = "[pi-discord-openclaw]";
+
+/** 延迟（openclaw sleep；表情终态 hold 用）。 */
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // 最后一条 assistant 完整文本（/copy 用；message_end 缓存，模块级便于 adaptCommandCtx 闭包引用）
 let lastAssistantText: string | undefined;
@@ -281,6 +292,9 @@ export default function (pi: ExtensionAPI) {
       toolProgressEnabled: cfg.toolProgress.enabled,
       debounceMs: cfg.inbound.debounceMs,
       toolProgressLines: cfg.streaming.toolProgress,
+      // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
+      formatAnswerText: (text) =>
+        convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code"),
     },
   });
 
@@ -308,17 +322,46 @@ export default function (pi: ExtensionAPI) {
     };
     try {
       await rest.createInteractionResponse(interaction.id, interaction.token, payload);
-    } catch {
-      // 首次响应失败（3s 超时/已响应）→ followUp 兜底
+    } catch (error) {
+      // 首次响应失败（3s 超时/已响应）→ followUp 兜底（笔记 25：失败要留日志，否则静默「无响应」）
+      console.error(
+        `${TAG} interaction 首次响应失败：`,
+        error instanceof Error ? error.message : String(error),
+      );
       if (interaction.application_id) {
         await rest
           .createInteractionFollowUp(interaction.application_id, interaction.token, {
             content,
             ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
           })
-          .catch(() => {});
+          .catch((followUpError) => {
+            console.error(
+              `${TAG} interaction followUp 兜底失败：`,
+              followUpError instanceof Error ? followUpError.message : String(followUpError),
+            );
+          });
       }
     }
+  }
+
+  /** interaction followUp（首次响应后追加消息；笔记 25：prompt/skill 执行失败引导用）。 */
+  async function followUpInteraction(
+    interaction: DiscordInteraction,
+    content: string,
+    ephemeral: boolean,
+  ): Promise<void> {
+    if (!interaction.application_id) return;
+    await rest
+      .createInteractionFollowUp(interaction.application_id, interaction.token, {
+        content,
+        ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
+      })
+      .catch((error) => {
+        console.error(
+          `${TAG} interaction followUp 失败：`,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
   }
 
   /** 读取 interaction options → 原始参数字符串（空格拼接）。 */
@@ -328,6 +371,35 @@ export default function (pi: ExtensionAPI) {
     return options
       .map((option) => (typeof option.value === "string" ? option.value : String(option.value ?? "")))
       .join(" ");
+  }
+
+  /**
+   * S184：动态命令本地执行（prompt 模板 / skill 指令）。
+   * 读模板/SKILL.md 内容作为 user message 发给 agent（与终端行为一致）；
+   * 非 prompt/skill 源或读取失败返回 false（由调用方引导终端执行）。
+   * 注意（笔记 25）：本函数不发消息——「已加载」提示由调用方负责
+   * （interaction 必须先响应防 3s 超时；文本路径用 replyTextCommand）。
+   */
+  async function executeDynamicSourceCommand(
+    command: ChatCommandDefinition,
+  ): Promise<boolean> {
+    const source = command.source;
+    const sourcePath = command.sourcePath;
+    if ((source !== "prompt" && source !== "skill") || !sourcePath) return false;
+    try {
+      const fs = await import("node:fs");
+      if (!fs.existsSync(sourcePath)) return false;
+      const content = fs.readFileSync(sourcePath, "utf8");
+      if (!content?.trim()) return false;
+      pi.sendUserMessage(content, { deliverAs: "followUp" });
+      return true;
+    } catch (err) {
+      console.error(
+        `${TAG} 动态命令 /${command.nativeName} 本地执行失败：`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
+    }
   }
 
   /** slash 命令分发（本地执行，不进模型）。动态命令（pi 内置/扩展，无本地 handler）提示终端。 */
@@ -344,26 +416,56 @@ export default function (pi: ExtensionAPI) {
     // 本地可执行命令优先；否则查动态合并集（pi 内置/扩展命令 → 提示终端）
     const local = findCommandByNativeName(name);
     const merged = mergedCommands;
-    if (local) {
-      const result = await executeCommand(local, readInteractionArgs(interaction), {
-        pi,
-        getCtx: () => commandCtx,
-        rpc,
-      });
-      await respondInteraction(interaction, result.content, result.ephemeral ?? true);
-      return;
-    }
-    const dynamicCommand =
-      merged && findMergedCommandByNativeName(merged, name);
-    if (dynamicCommand) {
+    try {
+      if (local) {
+        const result = await executeCommand(local, readInteractionArgs(interaction), {
+          pi,
+          getCtx: () => commandCtx,
+          rpc,
+        });
+        await respondInteraction(interaction, result.content, result.ephemeral ?? true);
+        return;
+      }
+      const dynamicCommand =
+        merged && findMergedCommandByNativeName(merged, name);
+      if (dynamicCommand) {
+        // S184：prompt 模板 / skill 命令 → 本地执行（读模板/SKILL.md 内容发给 agent）。
+        // 笔记 25：必须【先】响应 interaction（3s 超时 →「应用无响应」），再本地执行；
+        // 执行失败再 followUp 引导终端。
+        if (dynamicCommand.source === "prompt" || dynamicCommand.source === "skill") {
+          const label = dynamicCommand.source === "prompt" ? "模板" : "skill 指令";
+          await respondInteraction(
+            interaction,
+            `📥 正在加载 ${label}：/${name}…`,
+            false,
+          );
+          const ok = await executeDynamicSourceCommand(dynamicCommand);
+          if (!ok) {
+            await followUpInteraction(
+              interaction,
+              `/${name} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+              true,
+            );
+          }
+          return;
+        }
+        await respondInteraction(
+          interaction,
+          `/${name} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+          true,
+        );
+        return;
+      }
+      await respondInteraction(interaction, `未知命令：/${name}`, true);
+    } catch (err) {
+      // 修复：executeCommand 抛异常也要响应（Discord 3s 超时前），否则显示「应用无响应」
+      console.error(`${TAG} slash 命令 /${name} 执行异常：`, err instanceof Error ? err.message : String(err));
       await respondInteraction(
         interaction,
-        `/${name} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+        `❌ 命令 /${name} 执行异常：${err instanceof Error ? err.message : String(err)}`,
         true,
       );
-      return;
     }
-    await respondInteraction(interaction, `未知命令：/${name}`, true);
   }
 
   // 入站：Gateway MESSAGE_CREATE → 过滤 → 文本命令拦截 → ack(👀) → debounce → pi
@@ -397,17 +499,43 @@ export default function (pi: ExtensionAPI) {
       const match = content.match(/^\/([a-z0-9-_]+)/i);
       const candidate = match?.[1];
       if (candidate && findMergedCommandByNativeName(mergedCommands, candidate)) {
-        void replyTextCommand(
-          channelId,
-          `/${candidate} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
-        );
+        void (async () => {
+          const dynamicCmd = findMergedCommandByNativeName(mergedCommands, candidate);
+          // 笔记 25：prompt/skill 先发「加载中」再本地执行（原实现加载提示在函数内，调用方无感知）
+          if (dynamicCmd?.source === "prompt" || dynamicCmd?.source === "skill") {
+            const label = dynamicCmd.source === "prompt" ? "模板" : "skill 指令";
+            await replyTextCommand(
+              channelId,
+              `📥 正在加载 ${label}：/${candidate}…`,
+            );
+            const ok = await executeDynamicSourceCommand(dynamicCmd);
+            if (!ok) {
+              await replyTextCommand(
+                channelId,
+                `/${candidate} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+              );
+            }
+            return;
+          }
+          await replyTextCommand(
+            channelId,
+            `/${candidate} 需要终端执行：该命令仅在 pi 终端可用（扩展 API 无远程触发入口）。`,
+          );
+        })();
         return;
       }
     }
 
     // 普通消息：ack + 提交 pi
+    // 笔记 23：收到消息立即 setQueued（👀 走 controller，与 openclaw 一致）
     const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
-    statusReactions = createStatusReactionController(adapter);
+    statusReactions = createStatusReactionController({
+      adapter,
+      enabled: cfg.statusReactions?.enabled ?? true,
+      emojis: cfg.statusReactions?.emojis,
+      timing: cfg.statusReactions?.timing,
+    });
+    void statusReactions.setQueued();
     void queueInitialAckReaction({ adapter });
     bridge.pushUserMessage(content, channelId);
   });
@@ -481,7 +609,8 @@ export default function (pi: ExtensionAPI) {
       name: event.toolName,
       args: event.args as Record<string, unknown> | undefined,
     });
-    void statusReactions?.setTool();
+    // 笔记 23：工具分类表情（💻/🌐/🏗️/🛫/💁/🛠️，按工具名）
+    void statusReactions?.setTool(event.toolName);
   });
   pi.on("tool_execution_update", (event, ctx) => {
     captureCtx(ctx);
@@ -502,8 +631,20 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", (_event, ctx) => {
     captureCtx(ctx);
     void bridge.endTurn();
-    // 笔记 17：完成 → ✅（失败路径由 gateway error/fatal 处理 ❌）
-    void statusReactions?.setDone();
+    // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
+    const reactions = statusReactions;
+    const srCfg = cfg.statusReactions;
+    if (reactions && srCfg?.enabled !== false) {
+      void (async () => {
+        await reactions.setDone();
+        if (srCfg?.removeAckAfterReply !== false) {
+          await sleepMs(STATUS_TIMING.doneHoldMs);
+          await reactions.clear();
+        } else {
+          await reactions.restoreInitial();
+        }
+      })();
+    }
   });
 
   // 连接 Gateway；ready 后注册 slash 命令（笔记 20/21：
@@ -533,10 +674,13 @@ export default function (pi: ExtensionAPI) {
         }
         const dynamic = [...builtins, ...runtime];
         console.log(`${TAG} 动态命令收集：builtins=${builtins.length} runtime=${runtime.length}`);
-        // 斜杠注册 = 纯 pi 动态命令（不写死；本地执行器按 nativeName 匹配，见分发逻辑）
-        const merged = mergeCommandSets([], dynamic);
+        // 斜杠注册 = 本地可执行命令（有 handler）+ pi 动态命令（本地优先，nativeName 去重）
+        const merged = mergeCommandSets(getCommands(), dynamic);
         mergedCommands = merged;
-        const commands = merged.map((command) => ({
+        // 笔记 25：注册集排除 skill（100 上限 + 需终端）+ 保底截断 100；
+        // skill 保留在 merged 集 → 文本 /skill-xxx 仍可本地执行
+        const registerable = filterDiscordRegisterableCommands(merged);
+        const commands = registerable.map((command) => ({
           name: command.nativeName as string,
           // Discord 命令描述上限 100 字符（openclaw truncateDiscordCommandDescription 语义）
           description: truncateDiscordCommandDescription(command.description),
@@ -544,8 +688,9 @@ export default function (pi: ExtensionAPI) {
         }));
         try {
           await rest.registerApplicationCommands(applicationId, commands);
+          const skippedSkills = merged.length - registerable.length;
           console.log(
-            `${TAG} 已注册 ${commands.length} 个 slash 命令（纯动态，无写死）`,
+            `${TAG} 已注册 ${commands.length} 个 slash 命令（merged=${merged.length}，跳过 skill ${skippedSkills}）`,
           );
         } catch (error) {
           const detail =
@@ -564,6 +709,12 @@ export default function (pi: ExtensionAPI) {
   });
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
+    // 笔记 23：错误 → ❌（终态 hold 后 clear）
+    void (async () => {
+      await statusReactions?.setError();
+      await sleepMs(STATUS_TIMING.errorHoldMs);
+      await statusReactions?.clear();
+    })();
   });
   gateway.connect();
 

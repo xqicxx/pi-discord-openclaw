@@ -37,6 +37,8 @@ export interface OpenclawBridgeConfig {
   thinkingEnabled?: boolean;
   /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
   receiptSummary?: boolean;
+  /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。 */
+  formatAnswerText?: (text: string) => string;
 }
 
 export interface DiscordDelivery {
@@ -85,6 +87,8 @@ export class TurnManager {
       throttleMs: params.config.throttleMs,
       chunkSize: params.config.chunkSize,
       transport,
+      // 笔记 24: 最终回答投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
+      formatText: params.config.formatAnswerText,
     });
 
     // 笔记 19: progress 方块（思维链 + 工具进度同一条消息）

@@ -238,12 +238,24 @@ export async function executeCommand(
 
     case "models": {
       if (!ctx?.listAllModels) return reply("该命令需要模型注册表，请在终端执行 /models");
+      // 修复：有 model 参数时切换（复用 /model 的 setModel 逻辑），无参数时列出
+      const query = (values.model as string | undefined)?.trim();
+      if (query) {
+        if (!ctx.setModel) return reply("桥接尚未就绪，无法切换模型。");
+        const ok = await ctx.setModel(query);
+        return reply(
+          ok
+            ? `🤖 模型已切换：${query}`
+            : `❌ 未找到模型 ${query}（/models 查看全部；模型 id 形如 provider/model）`,
+        );
+      }
       const models = ctx.listAllModels();
       const current = ctx.getModelName();
       return reply(
         [
           `🤖 **模型（${models.length}）**：`,
           ...models.map((m) => (m === current ? `• ${m} ✅` : `• ${m}`)),
+          `💡 切换：/models <模型 id>`,
         ].join("\n").slice(0, 1900),
         false,
       );
