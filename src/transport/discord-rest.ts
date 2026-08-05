@@ -120,14 +120,16 @@ export class DiscordRest {
   /** POST /channels/{id}/messages — 发送消息（返回 message id）。 */
   async createChannelMessage(
     channelId: Snowflake,
-    options: { content: string; message_reference?: { message_id: string; fail_if_not_exists?: boolean } },
+    options: { content: string; embeds?: unknown[]; message_reference?: { message_id: string; fail_if_not_exists?: boolean } },
   ): Promise<DiscordCreatedMessage> {
     return this.request<DiscordCreatedMessage>("POST", `/channels/${channelId}/messages`, options);
   }
 
   /** PATCH /channels/{id}/messages/{mid} — 编辑消息。 */
-  async editChannelMessage(channelId: Snowflake, messageId: Snowflake, content: string): Promise<unknown> {
-    return this.request("PATCH", `/channels/${channelId}/messages/${messageId}`, { content });
+  async editChannelMessage(channelId: Snowflake, messageId: Snowflake, content: string, embeds?: unknown[]): Promise<unknown> {
+    const body: Record<string, unknown> = { content };
+    if (embeds !== undefined) body.embeds = embeds;
+    return this.request("PATCH", `/channels/${channelId}/messages/${messageId}`, body);
   }
 
   /** DELETE /channels/{id}/messages/{mid} — 删除消息。 */

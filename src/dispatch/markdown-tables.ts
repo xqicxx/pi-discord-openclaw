@@ -1,8 +1,9 @@
 // Discord 输出格式化 — 原生移植 openclaw（笔记 24）。
 // 1. convertMarkdownTables：markdown 表格 → 对齐 ASCII 表格 + 代码块包裹
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
-// 2. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
-// 3. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
+// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（tableMode "embed"）
+// 3. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
+// 4. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
 
 /** Discord 单条消息字符上限（openclaw DISCORD_TEXT_CHUNK_LIMIT）。 */
 export const DISCORD_TEXT_CHUNK_LIMIT = 2000;
@@ -106,6 +107,53 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   }
   if (!convertedAny) return markdown;
   return out.join("\n");
+}
+
+// ---- Embed 表格转换（tableMode "embed"） ----
+
+/** Discord Embed field 结构（最小面）。 */
+export interface DiscordEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+/** Discord Embed 结构（最小面）。 */
+export interface DiscordEmbed {
+  title?: string;
+  description?: string;
+  color?: number;
+  fields?: DiscordEmbedField[];
+  footer?: { text: string };
+}
+
+/**
+ * markdown 表格 → Discord Embed fields（tableMode "embed"）。
+ * 每行 = 1 个 field（name=第一列，value=其余列，inline 显示）。
+ * 表头放 embed.title，来源/备注放 footer。
+ * 返回 null 表示没有表格（调用方应回退到 code 模式）。
+ */
+export function convertMarkdownTableToEmbed(markdown: string): DiscordEmbed | null {
+  if (!markdown) return null;
+  const lines = markdown.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: DiscordEmbedField[] = [];
+      for (const row of block.rows) {
+        const name = row[0] ?? "";
+        const value = row.slice(1).join(" | ") || "—";
+        fields.push({ name: name.slice(0, 256), value: value.slice(0, 1024), inline: true });
+      }
+      return {
+        title: block.headers.join(" | ").slice(0, 256),
+        fields: fields.slice(0, 25),
+      };
+    }
+    i += 1;
+  }
+  return null;
 }
 
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----
