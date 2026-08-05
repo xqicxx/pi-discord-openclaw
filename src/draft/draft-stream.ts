@@ -254,15 +254,15 @@ export class DraftStream {
       // Issue #12 修复：已发送的独立 chunk 消息按 index 更新，而不是只发新块。
       for (let i = 1; i < chunks.length; i++) {
         if (i - 1 < this.chunkMessageIds.length) {
-          // 已存在独立消息 → 编辑更新
+          // 已发送过 → 更新内容
           await this.transport.editMessage(this.chunkMessageIds[i - 1], chunks[i]);
         } else {
-          // 新独立消息 → 发送并记录 ID
+          // 新块 → 发送并记录 ID
           const id = await this.transport.sendMessage(chunks[i]);
           this.chunkMessageIds.push(id);
         }
       }
-      // 若本次 chunk 数减少（理论上不会，但防御性截断）
+      // 若本次块数减少，截断多余已发送消息（可选，但保持一致性）
       if (chunks.length - 1 < this.chunkMessageIds.length) {
         this.chunkMessageIds.length = chunks.length - 1;
       }
