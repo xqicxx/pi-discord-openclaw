@@ -39,6 +39,8 @@ export interface OpenclawBridgeConfig {
   receiptSummary?: boolean;
   /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。 */
   formatAnswerText?: (text: string) => string;
+  /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），超时 abort 当前 turn。 */
+  turnWatchdogMs?: number;
 }
 
 export interface DiscordDelivery {
@@ -177,12 +179,15 @@ export type OpenclawActivityEvent =
  * - 管理当前 turn（单用户单 turn 模型）
  * - 提供连续输入 debounce
  * - 复用 lane 实现（解耦）
+ * - 笔记 27：turn 级 watchdog——连续无活动超时 abort
  */
 export class OpenclawBridge {
   private config: OpenclawBridgeConfig;
   private delivery: DiscordDelivery;
   private turn: TurnManager | undefined;
   private debouncer: InboundDebouncer;
+  private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastActivityAt = 0;
 
   constructor(params: { delivery: DiscordDelivery; config: OpenclawBridgeConfig }) {
     this.delivery = params.delivery;
@@ -221,6 +226,8 @@ export class OpenclawBridge {
       delivery: this.delivery,
       config: this.config,
     });
+    this.lastActivityAt = Date.now();
+    this.startWatchdog();
     return this.turn;
   }
 
@@ -230,14 +237,59 @@ export class OpenclawBridge {
 
   /** 事件路由到当前 turn（无 turn 时忽略）。 */
   handleActivity(event: OpenclawActivityEvent): boolean {
-    return this.turn?.handleActivity(event) ?? false;
+    const consumed = this.turn?.handleActivity(event) ?? false;
+    if (consumed) {
+      this.lastActivityAt = Date.now();
+      this.startWatchdog();
+    }
+    return consumed;
   }
 
   /** agent-end：收尾当前 turn。 */
   async endTurn(): Promise<void> {
+    this.clearWatchdog();
     if (this.turn) {
       await this.turn.endTurn();
       this.turn = undefined;
+    }
+  }
+
+  /** 笔记 27：turn 级 watchdog——连续无活动超时 abort。 */
+  private startWatchdog(): void {
+    this.clearWatchdog();
+    const timeoutMs = this.config.turnWatchdogMs ?? 90000;
+    if (timeoutMs <= 0) return;
+    this.watchdogTimer = setTimeout(() => {
+      const idleMs = Date.now() - this.lastActivityAt;
+      if (idleMs >= timeoutMs && this.turn && !this.turn.isSuperseded()) {
+        void this.abortTurn("任务超时已中止（连续 90s 无活动）");
+      }
+    }, timeoutMs + 1000);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = undefined;
+    }
+  }
+
+  /** 笔记 27：abort 当前 turn——清理状态 + 回复提示。 */
+  private async abortTurn(reason: string): Promise<void> {
+    const turn = this.turn;
+    if (!turn) return;
+    this.clearWatchdog();
+    this.turn = undefined;
+    try {
+      await this.delivery.sendMessage(reason);
+    } catch {
+      // 忽略发送失败
+    }
+    // 清理 draft 状态（防止残留预览）
+    try {
+      await turn.endTurn();
+    } catch {
+      // 忽略清理失败
     }
   }
 }

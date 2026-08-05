@@ -47,6 +47,8 @@ export interface OpenclawStyleConfig {
     /** 时序覆盖（openclaw statusReactions.timing）。 */
     timing?: Partial<Record<"debounceMs" | "stallSoftMs" | "stallHardMs" | "doneHoldMs" | "errorHoldMs", number>>;
   };
+  /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），默认 90s。 */
+  turnWatchdogMs?: number;
 }
 
 export const DEFAULTS: OpenclawStyleConfig = {
@@ -67,6 +69,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
   // 笔记 25 性能：debounce 250ms（单人使用合并收益小，延迟收益大——消息秒进 agent）
   inbound: { debounceMs: 250 },
   statusReactions: { enabled: true, removeAckAfterReply: true },
+  // 笔记 27：默认 90s 无活动即 abort（防止长 sleep 轮询卡死 turn）
+  turnWatchdogMs: 90000,
 };
 
 /**
