@@ -17,6 +17,7 @@ engine:
 safe-outputs:
   create-pull-request:
     auto-close-issue: true
+    allowed-base-branches: [master]
   add-comment:
   update-issue:
   noop:
@@ -24,8 +25,13 @@ safe-outputs:
 tools:
   bash: true
   github:
-    toolsets: [issues_read, pull_requests, repos]
+    toolsets: [issues, pull_requests, repos]
     min-integrity: none
+    read-tools:
+      - get_issue
+      - list_comments
+      - get_repository
+      - list_branches
 
 timeout-minutes: 30
 ---
