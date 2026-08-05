@@ -1,67 +1,27 @@
 name: AI Merger
+
 on:
+  pull_request_review:
+    types: [submitted]
   pull_request:
     types: [labeled]
+
 permissions:
   contents: write
   pull-requests: write
-  checks: read
+
 jobs:
   merge:
+    if: contains(github.event.review.state, 'approved') || contains(github.event.label.name, 'ai-approved')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event.label.name == 'ai-approved'
     steps:
-      - name: 检查并合并 PR
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Merge PR
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          python3 - <<'PYEOF'
-          import json, os, subprocess, time
-
-          repo = os.environ['REPO']
-          pr = os.environ['PR_NUMBER']
-
-          def gh(*args):
-              r = subprocess.run(['gh', *args, '-R', repo], capture_output=True, text=True)
-              return r.stdout.strip()
-
-          prinfo = json.loads(gh('pr', 'view', pr, '--json', 'state,mergeable,isDraft,labels,headRefName,baseRefName'))
-          print('PR state:', prinfo['state'], '| mergeable:', prinfo['mergeable'], '| draft:', prinfo['isDraft'])
-
-          # 等 checks 完成（最多 5 分钟）
-          checks = []
-          for i in range(30):
-              checks = json.loads(gh('pr', 'checks', pr, '--json', 'name,state,conclusion'))
-              pending = [c for c in checks if c["state"] in ("IN_PROGRESS", "QUEUED", "PENDING")]
-              if not pending:
-                  break
-              print(f"等待 checks... {len(pending)} 个进行中")
-              time.sleep(10)
-
-          failures = [c['name'] for c in checks if c.get('conclusion') in ('FAILURE', 'CANCELLED')]
-          if failures:
-              msg = "🤖 AI Merger: 有失败的 checks（" + ", ".join(failures) + "），不合并。"
-              subprocess.run(['gh', 'pr', 'comment', pr, '-R', repo, '--body', msg])
-              print("checks failed, skip merge")
-              raise SystemExit(0)
-
-          if prinfo['isDraft'] or prinfo['mergeable'] != 'MERGEABLE':
-              msg = "🤖 AI Merger: PR 是 draft 或存在冲突，无法合并。"
-              subprocess.run(['gh', 'pr', 'comment', pr, '-R', repo, '--body', msg])
-              print("not mergeable, skip")
-              raise SystemExit(0)
-
-          # 确认带 ai-approved 标签
-          labels = [l['name'] for l in prinfo['labels']]
-          if 'ai-approved' not in labels:
-              print("no ai-approved label, skip")
-              raise SystemExit(0)
-
-          r = subprocess.run(['gh', 'pr', 'merge', pr, '-R', repo, '--squash', '--delete-branch'], capture_output=True, text=True)
-          print('merge result:', r.stdout.strip() or r.stderr.strip())
-          if r.returncode == 0:
-              subprocess.run(['gh', 'pr', 'comment', pr, '-R', repo, '--body', "🤖 **AI Merger**: 检查通过（checks 全绿 + ai-approved），已自动合并 ✅"])
-          PYEOF
+          gh pr merge $PR_NUMBER --repo $REPO --squash --delete-branch
