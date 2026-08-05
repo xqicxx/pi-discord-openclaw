@@ -1,12 +1,13 @@
 name: Gemini PR Review
 
 on:
-  pull_request:
-    types: [opened, synchronize]
+  # 仅手动触发（workflow_dispatch）：按需 review，不自动跑，节省 GitHub Actions
+  # 免费额度（private 仓库 2000 分钟/月）。用法：
+  #   gh workflow run "Gemini PR Review" -f pr_number=<PR号>
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to review (leave empty = latest)'
+        description: 'PR number to review (leave empty = latest open PR)'
         required: false
         type: string
 
@@ -27,8 +28,10 @@ jobs:
           if [ -n "${{ github.event.inputs.pr_number }}" ]; then
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           else
-            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            PR=$(gh pr list --repo "${{ github.repository }}" --state open --limit 1 --json number -q '.[0].number' 2>/dev/null || echo '')
+            echo "number=$PR" >> "$GITHUB_OUTPUT"
           fi
+          echo "Resolved PR: ${{ steps.pr.outputs.number }}"
 
       - name: Fetch diff
         id: diff
