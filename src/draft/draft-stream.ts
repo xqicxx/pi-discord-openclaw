@@ -87,8 +87,8 @@ export class DraftStream {
   private deliveredText = "";
   /** Issue #1：已作为独立消息投递的 chunk 数（避免重复发送旧块）。 */
   private deliveredChunkCount = 0;
-  /** Issue #12：已发送的独立 chunk 消息 ID 列表（按 index 对应 chunks[1+]）。 */
-  private chunkMessageIds: string[] = [];
+  /** Issue #1：独立 chunk 消息的 messageId 列表（索引从 1 开始，0 对应主消息）。 */
+  private chunkMessageIds: (string | undefined)[] = [];
   /** Issue #1：本次 flush 正在投递的完整文本基线（飞行竞态防护）。 */
   private inFlightText = "";
   /** Issue #1：未投递的增量文本（相对 deliveredText / inFlightText 之后的部分）。 */
@@ -248,24 +248,31 @@ export class DraftStream {
       } else {
         await this.transport.editMessage(this.streamMessageId, chunks[0] ?? "");
       }
-      // Extra chunks become separate follow-up messages (openclaw parity).
-      // Issue #1 修复：只投递「新增」的后续块；已投递块不重复发送。
-      // 追加语义下 chunks[0] 前缀不变，主消息 editMessage 幂等。
-      // Issue #12 修复：已发送的独立 chunk 消息按 index 更新，而不是只发新块。
+      // 处理独立 chunk：更新已发送的，发送新增的，删除缩减后的多余块。
+      // Issue #1 修复：独立块也需跟随文本变化而更新，否则会残留旧版本。
+      // 先删除多余的（文本缩短导致 chunk 数量减少）
+      if (chunks.length < this.deliveredChunkCount) {
+        for (let i = chunks.length; i < this.deliveredChunkCount; i++) {
+          const msgId = this.chunkMessageIds[i];
+          if (msgId) {
+            await this.transport.deleteMessage(msgId);
+            this.chunkMessageIds[i] = undefined;
+          }
+        }
+        this.deliveredChunkCount = chunks.length;
+      }
+      // 更新/发送索引 1..chunks.length-1
       for (let i = 1; i < chunks.length; i++) {
-        if (i - 1 < this.chunkMessageIds.length) {
-          // 已发送过 → 更新内容
-          await this.transport.editMessage(this.chunkMessageIds[i - 1], chunks[i]);
+        if (i < this.deliveredChunkCount && this.chunkMessageIds[i]) {
+          // 已存在 → 更新
+          await this.transport.editMessage(this.chunkMessageIds[i]!, chunks[i]);
         } else {
-          // 新块 → 发送并记录 ID
-          const id = await this.transport.sendMessage(chunks[i]);
-          this.chunkMessageIds.push(id);
+          // 新增
+          const newMsgId = await this.transport.sendMessage(chunks[i]);
+          this.chunkMessageIds[i] = newMsgId;
         }
       }
-      // 若本次块数减少，截断多余已发送消息（可选，但保持一致性）
-      if (chunks.length - 1 < this.chunkMessageIds.length) {
-        this.chunkMessageIds.length = chunks.length - 1;
-      }
+      // 更新已发送计数（取最大值，保留可能已删除的索引）
       this.deliveredChunkCount = Math.max(this.deliveredChunkCount, chunks.length);
       // 基线存「未格式化」完整文本：updateDelta 拼接时与 pendingText 同域。
       this.deliveredText = rawText;
@@ -344,9 +351,11 @@ export class DraftStream {
     if (this.streamMessageId !== undefined) {
       try { await this.transport.deleteMessage(this.streamMessageId); } catch { /* ignore */ }
     }
-    // Issue #12：清理独立 chunk 消息
-    for (const id of this.chunkMessageIds) {
-      try { await this.transport.deleteMessage(id); } catch { /* ignore */ }
+    // 删除所有已发送的独立 chunk 消息
+    for (const msgId of this.chunkMessageIds) {
+      if (msgId) {
+        try { await this.transport.deleteMessage(msgId); } catch { /* ignore */ }
+      }
     }
     await this.deletePreviewIfDwelled();
     this.streamMessageId = undefined;
