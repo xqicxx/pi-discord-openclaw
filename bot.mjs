@@ -102,7 +102,7 @@ async function reviewPR(prNumber) {
   if (labels.includes(TAGS.approve) || labels.includes(TAGS.needsWork)) {
     // 保留 iterRound，不覆盖
     const verdict = labels.includes(TAGS.approve) ? 'approved' : 'needs-work';
-    setState(`pr:${prNumber}`, { ...st, stage: 'review-done', verdict });
+    setState(`pr:${prNumber}`, { ...st, stage: 'review-done', verdict, iterRound: st.iterRound || 0 });
     if (verdict === 'needs-work') {
       // 触发迭代，但仅在未达到上限时
       const round = st.iterRound || 0;
