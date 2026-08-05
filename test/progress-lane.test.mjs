@@ -132,15 +132,15 @@ function assert(cond, label) {
   lane.pushReasoningProgress(' installation');
   lane.pushReasoningProgress('!');
   const last = previews.at(-1) ?? '';
-  assert(last.includes('🧠 _Considering plugin installation!_'), '思维链在方块里流动（累积完整）');
+  assert(last.includes('> 🧠 _Considering plugin installation!_'), '思维链在方块里流动（累积完整，blockquote 区分）');
   assert(previews.length <= 4, '思维行原地替换不爆行');
   lane.onToolStart({ id: 't1', name: 'exec', args: { cmd: 'go test' } });
   const afterTool = previews.at(-1) ?? '';
-  assert(afterTool.includes('🛠️') && afterTool.includes('🧠 _Considering plugin installation!_'), '工具行与思维行同方块');
+  assert(afterTool.includes('🛠️') && afterTool.includes('> 🧠 _Considering plugin installation!_'), '工具行与思维行同方块');
   lane.pushReasoningProgress('Now checking');
   lane.pushReasoningProgress(' the results');
   const final = previews.at(-1) ?? '';
-  assert(final.includes('🧠 _Now checking the results_'), '工具行 commit 后新思考另起一行');
+  assert(final.includes('> 🧠 _Now checking the results_'), '工具行 commit 后新思考另起一行');
 }
 
 // 12. thinking 开关关闭 → 思维链不注入

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.15: 思考/回答视觉区分（笔记 26 续）
+
+- `Thinking Blockquote`: progress 方块里思维行从 `🧠 _斜体_` 改为 `> 🧠 _斜体_`（Discord 引用样式：灰色竖线 + 缩进），与 🛠️ 工具行、回答正文显著区分——不再是一团文字。
+- `Answer Separator`: 最终回答首条 flush 前加 ━━ 分隔线（每个 turn 重置），回答消息与思考/进度方块视觉分层。
+- `Summary Semantics`: endTurn 折叠摘要只统计真实工具行（纯思考 turn 显示「✅ 处理完成」而非误导的「N 个工具调用完成」）。
+- `Tests`: progress-lane.test 断言更新为 blockquote 格式。Impact: 全量 17 测试文件全绿，typecheck 通过。
+
 ## 0.1.14: 更多命令本地桥接（笔记 26 续）
 
 - `Whimsy Bridge`: /whimsy status/on/off/reset 本地实现——状态存 ~/.pi/agent/settings.json 的 whimsical 字段（与 pi-agent-extensions/whimsical 同格式双向兼容）；交互调权重（TUI 组件）保持终端引导。新增 src/commands/whimsy.ts + 测试（9 断言）。

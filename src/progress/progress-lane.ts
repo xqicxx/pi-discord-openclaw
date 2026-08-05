@@ -177,9 +177,10 @@ export function removeProgressLine(lines: ProgressLine[], id: string): ProgressL
 
 /** 进度行渲染为 HTML（笔记 03: renderTelegramProgressLine）。 */
 export function renderProgressLine(line: ProgressLine): string {
-  // 笔记 19: 思维行（🧠 _斜体_）原样输出，斜体不能被转义
+  // 笔记 19/26: 思维行（🧠 _斜体_）→ blockquote（> 🧠 _..._）——
+  // Discord 引用样式（灰色竖线）与 🛠️ 工具行、回答正文显著区分，不再一团
   if (line.text.startsWith("🧠 ")) {
-    return line.text;
+    return `> ${line.text}`;
   }
   if (!line.icon && (!line.label || line.label === "Commentary")) {
     return escapeDiscordMarkdown(line.text);
@@ -432,7 +433,11 @@ export class ProgressLane {
     if (this.lines.some((l) => l.status === "running")) {
       this.render();
     } else if (this.lines.length > 0) {
-      this.draft?.updatePreview({ text: `✅ ${this.lines.length} 个工具调用完成`, parseMode: "Markdown" });
+      // 笔记 26：摘要语义修正——只统计真实工具行，纯思考 turn 不误导为「工具调用完成」
+      const toolCount = this.lines.filter((l) => l.kind === "tool" && l.status === "completed").length;
+      this.draft?.updatePreview(
+        { text: toolCount > 0 ? `✅ ${toolCount} 个工具调用完成` : "✅ 处理完成", parseMode: "Markdown" },
+      );
     }
   }
 }
