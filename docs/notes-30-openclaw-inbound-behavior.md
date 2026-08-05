@@ -75,3 +75,33 @@ run-now 时：`abortActiveRun`（abort 活跃 run）+ `waitForActiveRunEnd`（RE
 1. **别名/竞态 bug 的典型**：流式编辑 PATCH 不带 embeds → Discord 静默保留旧值/清空字段，API 层无报错，只能靠端到端对比发现。
 2. **"必须第二次输入才有回应"根因**：不是输入被吞，而是每次输入都 abort 了正在跑的 turn（interrupt 语义）+ thinking max 思考慢。
 3. **Embed 表格的限制**：≤10 embeds/条、≤25 fields/表、name ≤256、value ≤1024、合计 ≤6000 字符——超限必须回退 ASCII，不能硬发。
+
+
+---
+
+## 四、错误可见性（笔记 30 补充）
+
+### openclaw 的做法
+- `messages.suppressToolErrors`（默认 **false**）：工具错误默认以 ⚠️ 警告**显示给用户**，可配置关闭
+- 状态表情 error 状态 ❌（2.5s 停留后清理）
+- turn 处理失败：`buildFailedProcessingResult` → 失败通知
+- 原则：**错误可见但克制**（concise warnings，避免刷屏）
+
+### pi-discord 修复前（静默点）
+- 投递失败超重试上限：仅 `console.error`（用户无感知，回复悄悄丢了）
+- 命令回复失败 / slash 命令异常：仅 `console.error`
+- Gateway 断连：仅日志
+- 大量 `catch { /* 忽略 */ }`
+
+### 修复（对齐 openclaw ⚠️ 模式）
+1. **`notifyError(title, error)`**（index.ts）：发到活跃频道，格式 `⚠️ **pi-discord 错误 · {title}**` + 错误详情（≤400 字符）
+2. **限频 30s/条**：错误风暴不刷屏（对齐 openclaw "concise warnings" 原则）
+3. **接线**：
+   - `draft-stream.ts` 新增 `onDeliveryFailed` 回调（超过 MAX_CONSECUTIVE_FAILURES 触发）→ `dispatch.ts` 转发 → `index.ts` notifyError
+   - 命令回复失败、slash 命令异常、Gateway 断连 → notifyError
+4. **不通知的**：rate limited（自动重试）、命令注册/全局命令同步等内部错误（噪音）
+
+### 原则
+- 用户可感知的失败（回复丢了、命令挂了、连接断了）→ 必须可见
+- 自动恢复的错误（限流重试）→ 保持安静
+

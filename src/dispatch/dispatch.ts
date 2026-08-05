@@ -46,6 +46,8 @@ export interface OpenclawBridgeConfig {
   turnWatchdogMs?: number;
   /** 连续工具超时阈值（默认 3 次），超过则强制 abort turn。 */
   maxToolTimeouts?: number;
+  /** 笔记 30：投递/桥层错误通知（宿主发到 discord，避免静默）。 */
+  onDeliveryFailed?: (error: unknown, context: string) => void;
 }
 
 export interface DiscordDelivery {
@@ -97,6 +99,8 @@ export class TurnManager {
       transport,
       // 笔记 24: 最终回答投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
       formatText: params.config.formatAnswerText,
+      // 笔记 30：投递失败通知宿主（不再静默）
+      onDeliveryFailed: (error, ctx) => params.config.onDeliveryFailed?.(error, ctx),
     });
 
     // 笔记 19: progress 方块（思维链 + 工具进度同一条消息）
@@ -104,6 +108,7 @@ export class TurnManager {
       throttleMs: params.config.throttleMs,
       chunkSize: params.config.chunkSize,
       transport,
+      onDeliveryFailed: (error, ctx) => params.config.onDeliveryFailed?.(error, ctx),
     });
 
     // 笔记 03: progress lane（🔧 工具进度 + 🧠 思维链）

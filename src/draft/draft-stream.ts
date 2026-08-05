@@ -31,6 +31,8 @@ export interface DraftStreamOptions {
   previewThrottleMs?: number;
   /** Telegram transport: send/edit/delete/chatAction. Injected by the bridge. */
   transport?: DraftTransport;
+  /** 笔记 30：投递失败超过重试上限时回调（宿主可通知用户，避免静默丢消息）。 */
+  onDeliveryFailed?: (error: unknown, context: string) => void;
   /**
    * 最终投递前格式化钩子（笔记 24：convertMarkdownTables + stripInlineDirectiveTags）。
    * 仅对 answer lane 传入；progress 草稿不格式化（进度行是纯文本）。
@@ -102,6 +104,7 @@ export class DraftStream {
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
   private formatText?: (text: string) => string | { content: string; embeds?: unknown[] };
+  private onDeliveryFailed?: (error: unknown, context: string) => void;
   /** 笔记 25 性能：preview 编辑节流窗口。 */
   private previewThrottleMs: number;
   private previewLastSentAtMs = 0;
@@ -112,6 +115,7 @@ export class DraftStream {
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.minInitialChars = options.minInitialChars ?? 0;
     this.formatText = options.formatText;
+    this.onDeliveryFailed = options.onDeliveryFailed;
     this.previewThrottleMs = Math.max(0, options.previewThrottleMs ?? 1000);
     this.transport = options.transport ?? {
       sendMessage: async () => "",
@@ -310,6 +314,12 @@ export class DraftStream {
           `[draft-stream] 投递失败 ${MAX_CONSECUTIVE_FAILURES} 次后放弃（streamMessageId=${this.streamMessageId ?? "new"}）: `,
           err instanceof Error ? err.message : String(err),
         );
+        // 笔记 30：不再静默——通知宿主（发到 discord 频道）
+        try {
+          this.onDeliveryFailed?.(err, "reply delivery");
+        } catch {
+          // 忽略通知自身失败
+        }
       }
       if (this.failures <= MAX_CONSECUTIVE_FAILURES) {
         // Issue #1 修复：重试保留完整累积。恢复未投递增量 =

@@ -302,6 +302,24 @@ export default function (pi: ExtensionAPI) {
   // RPC 只读桥（/export 等；懒启动，笔记 22）
   const rpc = new PiRpcBridge({ idleMs: 30_000 });
 
+  // 笔记 30：错误通知——关键错误发到 discord 频道（不再静默）。
+  // 限频：30s 窗口内最多 1 条，避免错误风暴刷屏。
+  let lastErrorNoticeAt = 0;
+  function notifyError(title: string, error: unknown): void {
+    const now = Date.now();
+    if (now - lastErrorNoticeAt < 30_000) return;
+    lastErrorNoticeAt = now;
+    const chatId = lastActiveChannelId;
+    if (!chatId) return;
+    const detail =
+      error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+    void rest
+      .createChannelMessage(chatId, {
+        content: `⚠️ **pi-discord 错误 · ${title}**\n\`${String(detail).slice(0, 400)}\``,
+      })
+      .catch(() => {});
+  }
+
   const delivery: DiscordDelivery = {
     sendMessage: async (chatId, text) => {
       const sent = await rest.createChannelMessage(chatId, { content: text });
@@ -340,6 +358,8 @@ export default function (pi: ExtensionAPI) {
       // maxLineChars 收敛思考行长度（openclaw progress.maxLineChars）
       receiptSummary: cfg.streaming.receiptSummary,
       maxLineChars: cfg.streaming.maxLineChars,
+      // 笔记 30：投递失败发到 discord（不再静默丢消息）
+      onDeliveryFailed: (error, context) => notifyError(`投递失败（${context}）`, error),
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
       // 笔记 26：区分靠 openclaw 折叠摘要（progress 方块变 -# 小字摘要），回答不加分隔线
       // issue 59：tableMode="embed" 时文本中的表格全部 → Discord Embed fields，
@@ -363,6 +383,7 @@ export default function (pi: ExtensionAPI) {
   async function replyTextCommand(channelId: string, content: string): Promise<void> {
     await rest.createChannelMessage(channelId, { content }).catch((error) => {
       console.error(`${TAG} text command reply failed:`, error?.message ?? error);
+      notifyError("命令回复发送失败", error);
     });
   }
 
@@ -540,6 +561,7 @@ export default function (pi: ExtensionAPI) {
     } catch (err) {
       // 修复：executeCommand 抛异常也要响应（Discord 3s 超时前），否则显示「应用无响应」
       console.error(`${TAG} slash 命令 /${name} 执行异常：`, err instanceof Error ? err.message : String(err));
+      notifyError(`slash 命令 /${name} 执行异常`, err);
       await respondInteraction(
         interaction,
         `❌ 命令 /${name} 执行异常：${err instanceof Error ? err.message : String(err)}`,
@@ -1028,6 +1050,7 @@ export default function (pi: ExtensionAPI) {
   });
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
+    notifyError("Discord Gateway 断连", `code=${code}，检查 token/intents/权限`);
     // 笔记 23：错误 → ❌（终态 hold 后 clear）
     void (async () => {
       await statusReactions?.setError();
