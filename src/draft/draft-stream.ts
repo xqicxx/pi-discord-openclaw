@@ -262,13 +262,6 @@ export class DraftStream {
           this.chunkMessageIds.push(id);
         }
       }
-      // 若本次文本缩短导致块数减少，删除多余的独立消息（可选，但保持一致性）
-      while (this.chunkMessageIds.length > chunks.length - 1) {
-        const extraId = this.chunkMessageIds.pop();
-        if (extraId) {
-          try { await this.transport.deleteMessage(extraId); } catch { /* ignore */ }
-        }
-      }
       this.deliveredChunkCount = Math.max(this.deliveredChunkCount, chunks.length);
       // 基线存「未格式化」完整文本：updateDelta 拼接时与 pendingText 同域。
       this.deliveredText = rawText;
@@ -347,6 +340,7 @@ export class DraftStream {
     if (this.streamMessageId !== undefined) {
       try { await this.transport.deleteMessage(this.streamMessageId); } catch { /* ignore */ }
     }
+    // Issue #12：清理独立 chunk 消息
     for (const id of this.chunkMessageIds) {
       try { await this.transport.deleteMessage(id); } catch { /* ignore */ }
     }
