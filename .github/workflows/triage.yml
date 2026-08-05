@@ -4,7 +4,6 @@ on:
     types: [opened, reopened]
 permissions:
   issues: write
-  pull-requests: read
 jobs:
   triage:
     runs-on: ubuntu-latest
@@ -55,11 +54,19 @@ jobs:
 
           body = {'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
                   'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 8192}}
-          req = urllib.request.Request(
+          def call_gemini(prompt_body, retries=2):
+              for attempt in range(retries):
+                  try:
+                      req = urllib.request.Request(
               f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}',
-              data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
-          with urllib.request.urlopen(req, timeout=120) as resp:
-              data = json.load(resp)
+                      data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+                      with urllib.request.urlopen(req, timeout=120) as resp:
+                          return json.load(resp)
+                  except Exception as e:
+                      if attempt == retries - 1:
+                          raise
+                      import time; time.sleep(5)
+          data = call_gemini(body)
           text = data['candidates'][0]['content']['parts'][0]['text']
           def parse_json(s):
               s = s.strip()
