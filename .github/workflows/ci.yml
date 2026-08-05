@@ -1,11 +1,13 @@
 name: CI
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [labeled]
 permissions:
   contents: read
 jobs:
   test:
+    # 只在 review 通过、bot 打上 ai-approved 标签（合并前最后一刻）才跑，省 Actions 额度
+    if: contains(github.event.pull_request.labels.*.name, 'ai-approved')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
