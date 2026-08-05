@@ -800,12 +800,60 @@ export default function (pi: ExtensionAPI) {
         console.log(
           `${TAG} 命令集：merged=${merged.length}，跳过 skill ${skippedSkills}，含 /skill=${skillGroups.length} 组，共 ${fullCommands.length} 个`,
         );
-        // 全局注册（DM 可见；限流则后台延迟重试，不阻塞 ready）
-        void registerCommandsForScope(
-          "全局",
-          () => rest.registerApplicationCommands(applicationId, fullCommands),
-          () => rest.listApplicationCommands(applicationId),
-        );
+        // 全局注册（DM 可见）：增量补齐模式——Discord 全局命令创建额度 200/天按滚动窗口
+        // 释放，一次 PUT 全量常因额度不足 429。改为：GET 现有 → 逐个 POST 缺失命令，
+        // 429 时按 retry_after 等待（额度释放一个补一个），后台自动补全不阻塞启动。
+        void (async () => {
+          try {
+            const existing = await rest.listApplicationCommands(applicationId);
+            const existingNames = new Set(existing.map((c) => c.name));
+            const missing = fullCommands.filter((c) => !existingNames.has(c.name));
+            if (missing.length === 0) {
+              console.log(`${TAG} 全局命令已完整（${fullCommands.length} 个），跳过注册`);
+              return;
+            }
+            console.log(
+              `${TAG} 全局命令补齐：现有 ${existing.length}，缺失 ${missing.length}（逐个创建，受 200/天额度滚动释放限制）`,
+            );
+            let created = 0;
+            for (const cmd of missing) {
+              let attempts = 0;
+              for (;;) {
+                try {
+                  await rest.createApplicationCommand(applicationId, cmd);
+                  created += 1;
+                  break;
+                } catch (error) {
+                  attempts += 1;
+                  const retryAfterMs = (error as { retryAfterMs?: unknown }).retryAfterMs;
+                  const wait = Math.min(
+                    Math.max(typeof retryAfterMs === "number" ? retryAfterMs : 30_000, 15_000),
+                    600_000,
+                  );
+                  if (attempts >= 3) {
+                    console.error(
+                      `${TAG} 全局命令 /${cmd.name} 创建失败 3 次，跳过（下次启动自动补）`,
+                    );
+                    break;
+                  }
+                  console.log(
+                    `${TAG} 全局命令 /${cmd.name} 限流，${Math.round(wait / 1000)}s 后重试（${attempts}/3）`,
+                  );
+                  await sleepMs(wait);
+                }
+              }
+              if (created % 10 === 0) {
+                console.log(`${TAG} 全局命令已创建 ${created}/${missing.length}`);
+              }
+            }
+            console.log(`${TAG} 全局命令补齐结束：本次创建 ${created} 个（共 ${fullCommands.length}）`);
+          } catch (error) {
+            console.error(
+              `${TAG} 全局命令增量注册失败：`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        })();
         // guild 注册（服务器内可见、即时生效；独立额度，全局失败不影响）
         void (async () => {
           try {

@@ -165,6 +165,14 @@ export class DiscordRest {
     return this.request<DiscordApplicationCommand[]>("GET", `/applications/${applicationId}/commands`);
   }
 
+  /** POST /applications/{id}/commands — 创建单个全局命令（增量补齐；不覆盖已有）。 */
+  async createApplicationCommand(
+    applicationId: Snowflake,
+    command: { name: string; description: string; options?: unknown[] },
+  ): Promise<DiscordApplicationCommand> {
+    return this.request<DiscordApplicationCommand>("POST", `/applications/${applicationId}/commands`, command);
+  }
+
   /** GET /applications/{id}/guilds/{gid}/commands — 现有 guild 命令（注册去重对比）。 */
   async listGuildApplicationCommands(
     applicationId: Snowflake,
