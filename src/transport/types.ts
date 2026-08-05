@@ -139,10 +139,16 @@ export interface DiscordInteraction {
   data?: {
     id?: Snowflake;
     name: string;
+    /** type=1 子命令的嵌套 options（/skill github 场景）。 */
     options?: Array<{
       name: string;
       type: number;
       value?: string | number | boolean;
+      options?: Array<{
+        name: string;
+        type: number;
+        value?: string | number | boolean;
+      }>;
     }>;
   };
 }

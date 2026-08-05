@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11: /skill 子命令分类（笔记 25 续）
+
+- `Skill Subcommand Grouping`: 55 个平铺 /skill-xxx 收拢为单个 /skill 命令 + 每 skill 一个子命令（/skill github /skill reading…）。新增 extractSkillSubcommands（子命令名 = nativeName 去 skill- 前缀，去重冲突防御）+ findSkillBySubcommand（分发查询）；handleInteraction 识别 type=1 子命令 → 本地执行 SKILL.md 指令。guild 注册 PUT 全量覆盖，旧 55 个顶级命令自动替换。Impact: Discord 命令面板清爽分类，/skill 下拉即选。
+- `Tests`: pi-commands.test 新增子命令用例（只提取 skills、去前缀、唯一、大小写不敏感查询）。Impact: 全量测试 15 文件全绿，typecheck 通过。
+
 ## 0.1.10: /skill:xxx 进 Discord（guild 级注册，笔记 25 续）
 
 - `Guild Skill Registration`: 新增 filterGuildRegisterableCommands + registerGuildApplicationCommands + listMyGuilds——skills 注册到 guild（独立 100/guild 额度，全局 100 上限之外），全局 88 命令不变。ready 时对 bot 所在每个 guild PUT skill 命令（55 个 /skill-xxx，超限截断 100）。交互执行路径（0.1.7 的 executeDynamicSourceCommand + 先响应）已就绪，点 /skill-xxx 即读 SKILL.md 发给 agent。

@@ -169,6 +169,49 @@ export function filterGuildRegisterableCommands(
 ): ChatCommandDefinition[] {
   return merged.filter((command) => command.source === "skill").slice(0, 100);
 }
+/**
+ * 笔记 25 续：/skill:xxx 分类进 Discord —— 单个 /skill 顶级命令 + 每 skill 一个子命令
+ * （/skill github /skill reading…），替代 55 个平铺 /skill-xxx。
+ * 子命令计入 Discord 100 上限（全局 88+55=143 超限，仍走 guild 额度：1+55=56 ≤ 100）。
+ * 子命令名 = nativeName 去 "skill-" 前缀（github/reading/…），非法则保留全名。
+ */
+export interface SkillSubcommandSpec {
+  /** 子命令名（Discord 合法名）。 */
+  subName: string;
+  /** 对应 skill 命令（merged 集条目，source==="skill"）。 */
+  skill: ChatCommandDefinition;
+}
+
+export function extractSkillSubcommands(merged: ChatCommandDefinition[]): SkillSubcommandSpec[] {
+  const seen = new Set<string>();
+  const specs: SkillSubcommandSpec[] = [];
+  for (const skill of merged) {
+    if (skill.source !== "skill") continue;
+    const native = skill.nativeName ?? "";
+    const stripped = native.replace(/^skill-/, "");
+    let subName = stripped && DISCORD_COMMAND_NAME_RE.test(stripped) ? stripped : native;
+    // 去重冲突：同名子命令时保留全名（极罕见，防御）
+    let candidate = subName;
+    let n = 2;
+    while (seen.has(candidate)) {
+      candidate = `${subName}-${n++}`;
+    }
+    subName = candidate;
+    seen.add(subName);
+    specs.push({ subName, skill });
+  }
+  return specs;
+}
+
+/** 按子命令名查 skill 命令（handleInteraction 分发用）。 */
+export function findSkillBySubcommand(
+  merged: ChatCommandDefinition[],
+  subName: string,
+): ChatCommandDefinition | undefined {
+  const sub = subName.trim().toLowerCase();
+  if (!sub) return undefined;
+  return extractSkillSubcommands(merged).find((s) => s.subName === sub)?.skill;
+}
 /** 在合并命令集中按原生名查找（本地 handler 优先）。 */
 export function findMergedCommandByNativeName(
   merged: ChatCommandDefinition[],

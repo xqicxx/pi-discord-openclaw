@@ -4,6 +4,8 @@ import {
   collectPiRuntimeCommands,
   filterDiscordRegisterableCommands,
   filterGuildRegisterableCommands,
+  extractSkillSubcommands,
+  findSkillBySubcommand,
   mergeCommandSets,
   findMergedCommandByNativeName,
   sanitizeDiscordCommandName,
@@ -140,6 +142,26 @@ function assert(cond, label) {
     source: 'skill',
   }));
   assert(filterGuildRegisterableCommands(manySkills).length === 100, 'guild 集超限截断 100');
+}
+
+// 8. skill 子命令分类（笔记 25 续）：/skill github 而非 55 个平铺 skill-xxx
+{
+  const fakePi = {
+    getCommands: () => [
+      { name: 'skill:github', description: 'GitHub skill', source: 'skill', sourceInfo: {} },
+      { name: 'skill:reading', description: 'Reading skill', source: 'skill', sourceInfo: {} },
+      { name: 'my-tool', description: 'tool', source: 'extension', sourceInfo: {} },
+    ],
+  };
+  const merged = mergeCommandSets(buildBuiltinCommands(), collectPiRuntimeCommands(fakePi));
+  const subs = extractSkillSubcommands(merged);
+  const names = subs.map((s) => s.subName);
+  assert(subs.length === 2, `只提取 skills（实际 ${subs.length}）`);
+  assert(names.includes('github') && names.includes('reading'), '子命令名去 skill- 前缀');
+  assert(new Set(names).size === names.length, '子命令名唯一');
+  assert(findSkillBySubcommand(merged, 'github')?.key === 'pi:skill:skill-github', '按子命令查回 skill 命令');
+  assert(findSkillBySubcommand(merged, 'nope') === undefined, '未知子命令 undefined');
+  assert(findSkillBySubcommand(merged, 'GITHUB')?.nativeName === 'skill-github', '子命令查大小写不敏感');
 }
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0) process.exit(1);

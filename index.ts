@@ -52,8 +52,9 @@ import {
 } from "./src/commands/options.ts";
 import {
   collectPiRuntimeCommands,
+  extractSkillSubcommands,
   filterDiscordRegisterableCommands,
-  filterGuildRegisterableCommands,
+  findSkillBySubcommand,
   loadPiBuiltinCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
@@ -434,6 +435,26 @@ export default function (pi: ExtensionAPI) {
         await respondInteraction(interaction, result.content, result.ephemeral ?? true);
         return;
       }
+      // 笔记 25 续：/skill <子命令> → 子命令对应的 skill 命令（/skill github 而非 skill-github）
+      if (name === "skill" && merged) {
+        const subOption = interaction.data?.options?.find((o) => o.type === 1);
+        const subCommand = subOption?.name ? findSkillBySubcommand(merged, subOption.name) : undefined;
+        if (subCommand) {
+          const ok = await executeDynamicSourceCommand(subCommand);
+          if (ok) {
+            await respondInteraction(interaction, `📥 已加载 skill 指令：/${subCommand.nativeName}，正在执行…`, false);
+          } else {
+            await respondInteraction(
+              interaction,
+              `/skill ${subOption?.name} 需要终端执行：该 skill 仅在 pi 终端可用。`,
+              true,
+            );
+          }
+          return;
+        }
+        await respondInteraction(interaction, `/skill 未知子命令：${subOption?.name ?? "?"}`, true);
+        return;
+      }
       const dynamicCommand =
         merged && findMergedCommandByNativeName(merged, name);
       if (dynamicCommand) {
@@ -712,21 +733,25 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
-        // 笔记 25 续：/skill:xxx 进 Discord —— guild 级注册（独立 100/guild 额度，
-        // 全局 100 上限已满；交互执行路径 executeDynamicSourceCommand 已就绪）
-        const guildSkills = filterGuildRegisterableCommands(merged);
-        if (guildSkills.length > 0) {
-          const guildCommands = guildSkills.map((command) => ({
-            name: command.nativeName as string,
-            description: truncateDiscordCommandDescription(command.description),
-            options: buildDiscordCommandOptions(command),
-          }));
+        // 笔记 25 续：/skill:xxx 进 Discord —— 单个 /skill 命令 + 每 skill 一个子命令
+        // （/skill github /skill reading…），guild 级注册（1+55=56 ≤ 100/guild 额度）
+        const skillSubs = extractSkillSubcommands(merged);
+        if (skillSubs.length > 0) {
+          const skillCommand = {
+            name: "skill",
+            description: "加载 skill 指令（终端 /skill:xxx 的 Discord 形式）",
+            options: skillSubs.map(({ subName, skill }) => ({
+              type: 1, // Subcommand
+              name: subName,
+              description: truncateDiscordCommandDescription(skill.description),
+            })),
+          };
           try {
             const guilds = await rest.listMyGuilds();
             for (const guild of guilds) {
-              await rest.registerGuildApplicationCommands(applicationId, guild.id, guildCommands);
+              await rest.registerGuildApplicationCommands(applicationId, guild.id, [skillCommand]);
               console.log(
-                `${TAG} 已注册 ${guildCommands.length} 个 skill 命令到 guild ${guild.name ?? guild.id}`,
+                `${TAG} 已注册 /skill 命令（${skillSubs.length} 个子命令）到 guild ${guild.name ?? guild.id}`,
               );
             }
           } catch (error) {
@@ -735,7 +760,7 @@ export default function (pi: ExtensionAPI) {
                 ? JSON.stringify((error as { body?: unknown }).body)
                 : undefined;
             console.error(
-              `${TAG} guild skill 命令注册失败：`,
+              `${TAG} guild /skill 命令注册失败：`,
               error instanceof Error ? error.message : String(error),
               detail ? `${detail}` : "",
             );
