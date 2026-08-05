@@ -37,6 +37,8 @@ export interface OpenclawBridgeConfig {
   thinkingEnabled?: boolean;
   /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
   receiptSummary?: boolean;
+  /** 笔记 30：思维行字符预算（openclaw progress.maxLineChars，默认 120，越小越清爽）。 */
+  maxLineChars?: number;
   /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。
    *  可返回 {content, embeds} 以支持 Discord Embed 表格投递（issue 59）。 */
   formatAnswerText?: (text: string) => string | { content: string; embeds?: unknown[] };
@@ -111,6 +113,7 @@ export class TurnManager {
         maxLines: 8,
         thinking: params.config.thinkingEnabled ?? true,
         receipt: params.config.receiptSummary ?? false,
+        thinkingMaxChars: params.config.maxLineChars ?? 120,
       },
       this.progressDraft,
     );

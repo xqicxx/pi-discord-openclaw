@@ -336,6 +336,10 @@ export default function (pi: ExtensionAPI) {
       toolProgressEnabled: cfg.toolProgress.enabled,
       debounceMs: cfg.inbound.debounceMs,
       toolProgressLines: cfg.streaming.toolProgress,
+      // 笔记 30：思考/输出强区分——receiptSummary 把方块折叠成小字摘要，
+      // maxLineChars 收敛思考行长度（openclaw progress.maxLineChars）
+      receiptSummary: cfg.streaming.receiptSummary,
+      maxLineChars: cfg.streaming.maxLineChars,
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
       // 笔记 26：区分靠 openclaw 折叠摘要（progress 方块变 -# 小字摘要），回答不加分隔线
       // issue 59：tableMode="embed" 时文本中的表格全部 → Discord Embed fields，

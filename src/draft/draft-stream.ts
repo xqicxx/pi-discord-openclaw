@@ -15,7 +15,7 @@ const DEFAULT_THROTTLE_MS = 1000;
 const MIN_THROTTLE_MS = 250;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_PREVIEW_FLOOD_SUSPEND_MS = 60_000;
-const MIN_PREVIEW_DWELL_MS = 4_000;
+const MIN_PREVIEW_DWELL_MS = 1_500; // 笔记 30：回答定型后 1.5s 内收起进度方块，减少思考/输出并存的一团感
 const DEFAULT_CHUNK_SIZE = 1900; // Discord 2000 上限留余量
 
 export interface DraftStreamOptions {

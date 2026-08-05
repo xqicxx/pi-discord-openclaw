@@ -214,10 +214,23 @@ export function renderProgressDraft(lines: ProgressLine[]): string {
  */
 export function normalizeReasoningProgressLine(text: string): string {
   const stripped = (text ?? "").replace(THINKING_TAG_RE, "");
-  return stripped
+  // 笔记 30：思考行去 markdown（**bold**、`code`、链接、# 标题、> 引用）——
+  // 思考区与回答的视觉区分靠「纯文本斜体 + 折叠摘要」，不带 markdown 噪音
+  return stripThinkingMarkdown(stripped)
     .replace(THINKING_HEADER_RE, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** 笔记 30：思考行去 markdown（**bold**、`code`、链接、# 标题、> 引用）——
+ *  思考区与回答的视觉区分靠「纯文本斜体 + 折叠摘要」，不带 markdown 噪音。 */
+export function stripThinkingMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/#{1,6}\s+/g, "") // 标题 #（任意位置：delta 拆分可能破坏行结构）
+    .replace(/^>\s+/gm, "");
 }
 
 /**
