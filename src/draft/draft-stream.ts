@@ -85,6 +85,12 @@ export class DraftStream {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private streamMessageId: string | undefined;
   private deliveredText = "";
+  /** Issue #1：已作为独立消息投递的 chunk 数（避免重复发送旧块）。 */
+  private deliveredChunkCount = 0;
+  /** Issue #1：本次 flush 正在投递的完整文本基线（飞行竞态防护）。 */
+  private inFlightText = "";
+  /** Issue #1：未投递的增量文本（相对 deliveredText / inFlightText 之后的部分）。 */
+  private pendingDelta = "";
   private failures = 0;
   private stopped = false;
   private previewMessageId: string | undefined;
@@ -120,7 +126,14 @@ export class DraftStream {
 
   /** Append delta to current draft. */
   updateDelta(delta: string): void {
-    this.update(this.pendingText + delta);
+    // Issue #1 修复：pendingText 始终保持「完整累积文本」语义。
+    // pendingDelta 只记增量；前缀基线 = 本次 flush 飞行中的完整文本
+    // （inFlightText，飞行期间到达的 delta 也拼到完整前缀上）或已成功
+    // 投递的 deliveredText。原实现 flush 清空 pendingText 后飞行期间的
+    // updateDelta 从空串累积，下一次 editMessage 用「尾部」覆盖已发送内容。
+    this.pendingDelta += delta;
+    const base = this.inFlightText || this.deliveredText;
+    this.update(base + this.pendingDelta);
   }
 
   /** Lazy update: text resolved at flush time (笔记 01: updateLazy). */
@@ -212,29 +225,36 @@ export class DraftStream {
       this.scheduleFlush();
       return;
     }
-    const rawText = this.pendingText;
-    this.pendingText = "";
+    const rawText = this.pendingText; // updateDelta 已保证 = 基线 + pendingDelta
     // 笔记 01: minInitialChars — 未达最小长度不发首条（防推送轰炸）
     if (this.streamMessageId === undefined && rawText.length < this.minInitialChars) {
-      this.pendingText = rawText;
       this.scheduleFlush();
       return;
     }
-    // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
-    const text = this.formatText ? this.formatText(rawText) : rawText;
-    const chunks = splitChunks(text, this.chunkSize);
+    this.pendingText = "";
+    this.pendingDelta = "";
+    // Issue #1 修复：进入飞行前锁定基线；飞行期间 updateDelta 以它为前缀累积。
+    // finally 中清空，保证飞行窗口外的 updateDelta 回落到 deliveredText 基线。
+    this.inFlightText = rawText;
     try {
+      // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
+      const text = this.formatText ? this.formatText(rawText) : rawText;
+      const chunks = splitChunks(text, this.chunkSize);
       if (this.streamMessageId === undefined) {
         this.streamMessageId = await this.transport.sendMessage(chunks[0] ?? "");
-        this.deliveredText = chunks[0] ?? "";
+        this.deliveredChunkCount = 1;
       } else {
         await this.transport.editMessage(this.streamMessageId, chunks[0] ?? "");
-        this.deliveredText = chunks[0] ?? "";
       }
       // Extra chunks become separate follow-up messages (openclaw parity).
-      for (let i = 1; i < chunks.length; i++) {
+      // Issue #1 修复：只投递「新增」的后续块；已投递块不重复发送。
+      // 追加语义下 chunks[0] 前缀不变，主消息 editMessage 幂等。
+      for (let i = this.deliveredChunkCount; i < chunks.length; i++) {
         await this.transport.sendMessage(chunks[i]);
       }
+      this.deliveredChunkCount = Math.max(this.deliveredChunkCount, chunks.length);
+      // 基线存「未格式化」完整文本：updateDelta 拼接时与 pendingText 同域。
+      this.deliveredText = rawText;
       this.failures = 0;
       await this.transport.sendChatAction("typing");
     } catch (err) {
@@ -250,9 +270,15 @@ export class DraftStream {
       }
       this.failures++;
       if (this.failures <= MAX_CONSECUTIVE_FAILURES) {
-        this.pendingText = text;
+        // Issue #1 修复：重试保留完整累积。恢复未投递增量 =
+        // 本次 rawText 超出 deliveredText 的部分 + 飞行中新累积的 pendingDelta，
+        // 重新拼成完整文本等待下次 flush。
+        this.pendingDelta = rawText.slice(this.deliveredText.length) + this.pendingDelta;
+        this.pendingText = this.deliveredText + this.pendingDelta;
         this.scheduleFlush();
       }
+    } finally {
+      this.inFlightText = "";
     }
   }
 
@@ -307,6 +333,9 @@ export class DraftStream {
     await this.deletePreviewIfDwelled();
     this.streamMessageId = undefined;
     this.deliveredText = "";
+    this.deliveredChunkCount = 0;
+    this.inFlightText = "";
+    this.pendingDelta = "";
     this.pendingText = "";
     this.stopped = false;
   }
