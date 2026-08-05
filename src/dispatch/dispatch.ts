@@ -42,7 +42,9 @@ export interface OpenclawBridgeConfig {
   /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。
    *  可返回 {content, embeds} 以支持 Discord Embed 表格投递（issue 59）。 */
   formatAnswerText?: (text: string) => string | { content: string; embeds?: unknown[] };
-  /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），超时 abort 当前 turn。 */
+  /** 笔记 27/30：turn 级 watchdog——连续无活动超时（ms）。
+   *  第一次超时发「还在处理」软提示（不 abort）；再等 5 分钟仍无活动才暂停。
+   *  对齐 openclaw：stall 表情分级提示（10s ⏳ → 30s ⚠️），abort 是最后手段。 */
   turnWatchdogMs?: number;
   /** 连续工具超时阈值（默认 3 次），超过则强制 abort turn。 */
   maxToolTimeouts?: number;
@@ -206,6 +208,8 @@ export class OpenclawBridge {
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
   private lastActivityAt = 0;
   private consecutiveToolTimeouts = 0;
+  /** 笔记 30：是否已发过「还在处理」软提示（第二次超时才 abort）。 */
+  private stallWarned = false;
   /** 笔记 30：turn 活跃时收到的新消息排队（对齐 openclaw 默认 steer/followup，
    *  不中断当前 agent；turn 结束后自动处理）。 */
   private pendingInputs: string[] = [];
@@ -276,6 +280,7 @@ export class OpenclawBridge {
     });
     this.lastActivityAt = Date.now();
     this.consecutiveToolTimeouts = 0;
+    this.stallWarned = false;
     this.startWatchdog();
     return this.turn;
   }
@@ -323,7 +328,18 @@ export class OpenclawBridge {
     this.watchdogTimer = setTimeout(() => {
       const idleMs = Date.now() - this.lastActivityAt;
       if (idleMs >= timeoutMs && this.turn && !this.turn.isSuperseded()) {
-        void this.abortTurn("任务超时已中止（连续 90s 无活动）");
+        if (!this.stallWarned) {
+          // 笔记 30：第一次超时 → 软提示，不打断（长工具/长思考是正常的）
+          this.stallWarned = true;
+          void this.delivery
+            .sendMessage(this.turn.chatId, "⏳ 还在处理中…（长时间无进展。可以再等等，或发 /stop 取消重来）")
+            .catch(() => {});
+          this.lastActivityAt = Date.now(); // 重置 idle 计时，再给 5 分钟
+          this.startWatchdog();
+        } else {
+          // 第二次超时（已提示过）→ 友好暂停
+          void this.abortTurn("⏸️ 任务长时间无进展，已自动暂停。直接重发需求即可，或发 /stop 彻底取消。");
+        }
       }
     }, timeoutMs + 1000);
   }

@@ -666,19 +666,8 @@ export default function (pi: ExtensionAPI) {
     // 笔记 29/30：新消息经桥排队后提交给 agent（steer 在当前工具调用后立即处理）
     pi.sendUserMessage(text, { deliverAs: "steer" });
   };
-  // 笔记 30：消息排队时给用户明确提示（👀=queued 语义的可见化，避免误解为「同时在处理」）
-  let queueNoticePending = false;
-  bridge.onQueued = async (chatId) => {
-    if (queueNoticePending || !chatId) return;
-    queueNoticePending = true;
-    try {
-      await rest.createChannelMessage(chatId, {
-        content: "⏳ 排队中：上一条处理完自动继续…",
-      });
-    } catch {
-      // 忽略发送失败
-    }
-  };
+  // 笔记 30：排队用表情表达（⏳=排队中），不再发文字提示——
+  // 收到消息即 ⏳，agent_start 变 👀（处理中），thinking 变 🧠。
   // 笔记 28：watchdog/触发词中断时真正停止 pi agent（否则任务还在后台跑）
   bridge.onAbort = () => {
     try {
@@ -743,12 +732,15 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
-    // 笔记 30：新一轮开始，允许下一条排队消息再次提示
-    queueNoticePending = false;
-    void statusReactions?.setThinking();
+    // 笔记 30：处理中 👀（与排队 ⏳ 区分）
+    void statusReactions?.setWorking();
   });
   pi.on("message_update", (event, ctx) => {
     captureCtx(ctx);
+    // 笔记 30：开始思考 → 🧠（覆盖处理中 👀）
+    if (event.assistantMessageEvent.type === "thinking_delta") {
+      void statusReactions?.setThinking();
+    }
     const adapted = adaptPiAssistantEvent(event.assistantMessageEvent);
     if (adapted) bridge.handleActivity(adapted);
   });

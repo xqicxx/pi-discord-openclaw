@@ -11,7 +11,8 @@ export const DEFAULT_ACK_REACTION = "👀";
 
 /** 默认表情全集（openclaw DEFAULT_EMOJIS，13 个，全部移植）。 */
 export const STATUS_EMOJIS = {
-  queued: "👀",
+  queued: "⏳",
+  working: "👀",
   thinking: "🧠",
   tool: "🛠️",
   coding: "💻",
@@ -107,6 +108,8 @@ export interface StatusReactionControllerOptions {
 
 export interface StatusReactionController {
   setQueued: () => void;
+  /** 笔记 30：处理中（agent_start 后、thinking 前）——👀 表示真正开工。 */
+  setWorking: () => void;
   setThinking: () => void;
   setTool: (toolName?: string) => void;
   setCompacting: () => void;
@@ -231,6 +234,11 @@ export function createStatusReactionController(params: StatusReactionControllerO
     scheduleEmoji(emojis.queued, { immediate: true });
   }
 
+  /** 笔记 30：处理中状态（👀）——与 queued(⏳) 区分，用户能看到「开始干活了」。 */
+  function setWorking(): void {
+    scheduleEmoji(emojis.working, { immediate: true });
+  }
+
   function setThinking(): void {
     scheduleEmoji(emojis.thinking);
   }
@@ -302,6 +310,7 @@ export function createStatusReactionController(params: StatusReactionControllerO
 
   return {
     setQueued,
+    setWorking,
     setThinking,
     setTool,
     setCompacting,

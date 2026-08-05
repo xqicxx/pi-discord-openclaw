@@ -153,6 +153,10 @@ export function convertTextWithTables(
   const embeds: unknown[] = [];
   let i = 0;
   let totalEmbedChars = 0;
+  // 笔记 30：Discord 的 embed 只能渲染在 content 下方——
+  // 若表格之后还有内容，embed 会把表格挤到最后（位置错乱）。
+  // 此时回退 ASCII 代码块（保位置优先）。
+  let sawTable = false;
   while (i < lines.length) {
     const block = parseTableBlock(lines, i);
     if (block) {
@@ -171,8 +175,11 @@ export function convertTextWithTables(
       if (totalEmbedChars + chars > 5800) return null; // 6000 留余量
       totalEmbedChars += chars;
       embeds.push(embed);
+      sawTable = true;
       i += 2 + block.rows.length;
     } else {
+      // 笔记 30：表格之后还有非空内容 → 回退（embed 位置会错乱）
+      if (sawTable && lines[i].trim() !== "") return null;
       out.push(lines[i]);
       i += 1;
     }

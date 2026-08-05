@@ -105,3 +105,99 @@ run-now 时：`abortActiveRun`（abort 活跃 run）+ `waitForActiveRunEnd`（RE
 - 用户可感知的失败（回复丢了、命令挂了、连接断了）→ 必须可见
 - 自动恢复的错误（限流重试）→ 保持安静
 
+
+
+---
+
+## 五、消息截断根因（笔记 30 补充）
+
+### 现象
+discord 上 agent 回复**停在中间态**（如 22:16:09 停在「自建应用」，完整版 22:16:15 有 1194 字符，discord 上只有 405）——流式内容没补全。
+
+### openclaw 的机制（对照）
+- `textChunkLimit`（Discord 2000）：超长**分块成多条消息**，不丢内容
+- `maxLinesPerMessage`（默认 17）：传给 adapter chunker 的**分块提示**（超行分多条），不是截断丢弃
+- 结论：openclaw 从设计上**不丢内容**，只分块
+
+### pi-discord 的根因（竞态 bug，draft-stream.ts）
+1. 流式 flush（中间态）在**飞行中**（editMessage 未返回）
+2. 完整 delta + agent_end 到达 → `stop()` → `flush()`
+3. `flush()` 开头 `if (this.flushing) return`（防重入）→ **直接返回，完整内容没发**
+4. `finally` 里 `if (pendingText && !this.stopped) scheduleFlush()`——此时 stopped 已 true → 跳过重排
+5. 结果：消息永久停在中间态 = **截断**
+
+### 修复
+`stop()` 等待飞行中的 flush 结束（while flushing 轮询 50ms），再 flush 最终内容：
+```js
+async stop() {
+  if (this.timer) clearTimeout(this.timer);
+  while (this.flushing) await new Promise(r => setTimeout(r, 50));
+  await this.flush();  // 此时完整内容可发
+  this.stopped = true;
+  ...
+}
+```
+单测验证：模拟慢 editMessage（飞行中 stop）→ 最终内容完整发出（PASS）。
+
+### 经验
+- `flushing` 防重入标志与 `stop()` 的配合是经典竞态：**stop 不能只是"再调一次"**，要等飞行完成
+- 流式系统的"截断"大多不是主动截断，而是**最终内容在竞态中丢失**
+
+
+---
+
+## 六、视觉体验优化（笔记 30 补充）
+
+### 1. 表格位置错乱（Discord embed 固有限制）
+- 根因：Discord 的 embed 只能渲染在 content 下方。回复「文字→表格→文字」时，convertTextWithTables 把表格提取成 embed → Discord 把表格挤到最后 → 位置错乱
+- 修复：convertTextWithTables 检测「表格之后还有非空内容」→ 回退 ASCII 代码块（保位置优先）；表格在末尾/纯表格/多表格 → embed（美观）
+- 权衡：美观（embed）vs 位置（ASCII）——位置正确优先
+
+### 2. 状态表情状态机（对齐用户直觉）
+用户期望：排队=⏳ → 处理=👀 → 思考=🧠 → 工具=🛠️ → 完成=✅
+
+| 阶段 | 表情 | 触发 |
+|---|---|---|
+| 收到/排队 | ⏳（原 👀）| 消息到达（queued）|
+| 处理中 | 👀（新 working）| agent_start |
+| 思考 | 🧠 | thinking_delta |
+| 工具 | 🛠️/分类 | tool_execution_start |
+| 完成 | ✅ | agent_end（1.5s 后清理）|
+| 错误 | ❌ | Gateway 错误 |
+
+- 删除生硬的文字提示「⏳ 排队中：上一条处理完自动继续…」——纯表情表达
+- 与 openclaw 差异：openclaw 的 👀 是 queued（收到即设）；本实现改为 ⏳=queued、👀=working（处理中），更符合用户直觉
+
+### 3. 开源参考
+- openclaw：👀=queued 语义 + 13 表情 + debounce 700ms + 终态清理（笔记 23 已移植）
+- 本实现：openclaw 基础上 queued 改 ⏳、新增 working 👀——「排队/处理」视觉分离
+
+---
+
+## 七、超时机制优化（笔记 30 补充）
+
+### openclaw 的做法（调研结论）
+- **不主动 abort**：stall 表情分级提示——10s 无活动 → ⏳（stallSoft）、30s → ⚠️（stallHard），每次活动重置
+- abort 是最后手段：abort-cutoff 机制只负责「abort 后停止生成」，不设激进超时
+- 长工具/长思考是**正常**的，不会被打断
+
+### pi-discord 修复前
+- turnWatchdogMs 90s/180s 无活动 → 直接 abort「任务超时已中止」——**太短 + 生硬**
+
+### 修复（两级超时 + 友好文案）
+| 阶段 | 行为 |
+|---|---|
+| 无活动 10s | ⏳ 表情（stallSoft，已有）|
+| 无活动 30s | ⚠️ 表情（stallHard，已有）|
+| 无活动 10 分钟（第一次）| 发软提示「⏳ 还在处理中…」，**不打断**，重置计时 |
+| 又 10 分钟无活动（第二次）| 友好暂停「⏸️ 任务长时间无进展，已自动暂停…」|
+
+- turnWatchdogMs 180s → 600s（10 分钟）
+- 对齐 openclaw 哲学：**提示先行、abort 最后**，长任务不被误杀
+
+### 4. 状态表情状态机（最终版，用户确认）
+- 文字提示彻底移除（含历史消息清理）——排队状态**纯表情**表达
+- 状态序列（事件间隔 >700ms debounce 时逐步显示）：
+  `⏳(收到/排队) → 👀(agent_start 开工) → 🧠(thinking_delta) → 🛠️(工具) → ✅(完成,清理其他)`
+- 表情为 openclaw「只增不减 + 终态清理」语义：Discord 上一排小表情表示状态演进，终态 ✅ 时移除其余
+- 与 openclaw 差异：openclaw queued=👀；本实现 queued=⏳、working=👀——「排队/处理」视觉分离，更符合用户直觉

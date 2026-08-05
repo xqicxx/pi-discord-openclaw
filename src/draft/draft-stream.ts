@@ -355,6 +355,12 @@ export class DraftStream {
   /** Final flush + mark stopped. */
   async stop(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
+    // 笔记 30：防截断竞态——若上一次 flush 仍在飞行（editMessage 未返回），
+    // 直接 flush 会因 flushing 防重入而返回，完整内容丢失（消息停在中间态）。
+    // 等待飞行结束，再发最终内容。
+    while (this.flushing) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     // 先发送 pending 文本，再标记 stopped（否则 flush() 会因 stopped 直接返回，最终回复丢失）
     await this.flush();
     this.stopped = true;
