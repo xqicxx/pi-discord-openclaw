@@ -1,5 +1,9 @@
 # pi-discord-openclaw
 
+> **English** — A Discord bridge for the [Pi coding agent](https://github.com/xqicxx/pi), recreating the OpenClaw streaming experience: 🧠 reasoning rendered as separate italic messages, 🔧 real-time tool-progress lines, 📝 typewriter-style streamed answers (edited in place), and ⏭️ debounced follow-up merging. Ported from **pi-telegram-openclaw** with the transport layer swapped to Discord (REST v10 + Gateway WS), keeping the OpenClaw streaming pipeline intact. Zero extra dependencies — built on Node ≥ 22 native fetch & WebSocket.
+>
+> **中文** — 让 Pi 编码代理在 Discord 上复刻 OpenClaw 的流式输出体验（思考 🧠 / 工具进度 🔧 / 打字机回复 📝 / 连续输入 ⏭️），基于 pi-telegram-openclaw 改造，transport 换为 Discord（REST v10 + Gateway WS），保留 OpenClaw 流式机制，零额外依赖（Node ≥ 22 原生 fetch + WebSocket）。
+
 > 复刻 OpenClaw 在 Discord 上的流式输出体验——思考 🧠、工具调用 🔧、流式回复 📝、连续输入 ⏭️——基于 **pi-telegram-openclaw** 改造（transport 换 Discord，保留 OpenClaw 流式机制）。
 
 ## ✨ 为什么做这个？
