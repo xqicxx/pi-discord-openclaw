@@ -25,7 +25,7 @@ safe-outputs:
 tools:
   bash: true
   github:
-    toolsets: [issues_full, pull_requests, repos]
+    toolsets: [issues, pull_requests, repos]
     min-integrity: none
     read-tools:
       - get_issue
