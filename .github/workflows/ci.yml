@@ -7,11 +7,13 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # 零运行时依赖（pi 包均为 import type），无需 npm install
+          cache: npm
+      - run: npm ci
+      # pi-commands 等测试运行时导入真实 pi 包，必须安装依赖
       - run: npm test
