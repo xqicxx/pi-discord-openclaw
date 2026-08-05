@@ -34,7 +34,7 @@ safe-outputs:
 tools:
   web-fetch:
   github:
-    toolsets: [issues, labels]
+    toolsets: [issues, labels, comments, search]
     min-integrity: none # This workflow is allowed to examine and comment on any issues
 
 timeout-minutes: 10
