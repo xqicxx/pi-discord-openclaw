@@ -64,7 +64,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
   },
   reasoning: { enabled: true, style: "emoji-italic" },
   toolProgress: { enabled: true, maxLines: 8 },
-  inbound: { debounceMs: 1000 },
+  // 笔记 25 性能：debounce 250ms（单人使用合并收益小，延迟收益大——消息秒进 agent）
+  inbound: { debounceMs: 250 },
   statusReactions: { enabled: true, removeAckAfterReply: true },
 };
 

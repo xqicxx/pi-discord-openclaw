@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9: 性能优化（笔记 25 续）
+
+- `Preview Throttle`: DraftStream 新增 previewThrottleMs（默认 1000ms）——thinking_delta 毫秒级到达时，窗口内合并为最新值、窗口后编辑一次（首条立即发）。Discord 消息操作限流 ~1/s/channel，无节流时 thinking 高频 edit 触发 429 风暴（重试 → 卡顿 → 暂停）。Impact: 思考方块 1s 一跳稳定流动，REST 调用量降一个数量级。
+- `Discord 429 Backoff`: flush 失败识别 DiscordRateLimitError.retryAfterMs（原只认 Telegram 格式，Discord 限流误入普通失败重试风暴）。Impact: 429 时优雅退避而非反复重试。
+- `Typing Throttle`: sendChatAction 节流 10s（Discord 官方建议间隔；原每次 flush 都发，超 typing 限流 5/10s）。Impact: typing 请求减少 ~90%。
+- `Faster Inbound`: inbound.debounceMs 1000 → 250（单人使用合并收益小，消息进 agent 感知延迟 -750ms）。
+- `Tests`: draft-stream.test 新增节流合并用例（窗口内不重复发 + 窗口后最新值编辑）；并发串行用例显式 previewThrottleMs:0 保持原语义。Impact: 全量测试 15 文件全绿，typecheck 通过。
+
 ## 0.1.8: preview 并发竞态修复（笔记 25 续）
 
 - `Preview Serialization`: DraftStream.updatePreview 的发送改为串行 drain（pendingPreview 最新值合并 + previewFlushInFlight 互斥）——thinking_delta 毫秒级到达、REST sendMessage 几十~几百 ms，原实现并发 flushPreview 下 previewMessageId 竞态覆盖，每条消息都成孤儿 → Discord 里思考内容大量重复（一轮思考 15+ 条递增消息）。修复后首条 send、后续全部 edit 同一条，中间预览按最新值合并。Impact: 思考方块恢复单条流动，不再刷屏。

@@ -23,6 +23,12 @@ export interface DraftStreamOptions {
   chunkSize?: number;
   /** Minimum chars before sending first message (debounce push notifications). */
   minInitialChars?: number;
+  /**
+   * Preview（思考/进度方块）编辑节流（笔记 25 性能）：thinking_delta 毫秒级到达，
+   * 无节流时 edit 频率逼近 Discord 限流（1/s/channel）→ 429 风暴。
+   * 默认 1000ms：首条立即发，窗口内新预览合并为最新值，窗口后编辑一次。
+   */
+  previewThrottleMs?: number;
   /** Telegram transport: send/edit/delete/chatAction. Injected by the bridge. */
   transport?: DraftTransport;
   /**
@@ -86,12 +92,17 @@ export class DraftStream {
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
   private formatText?: (text: string) => string;
+  /** 笔记 25 性能：preview 编辑节流窗口。 */
+  private previewThrottleMs: number;
+  private previewLastSentAtMs = 0;
+  private previewTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: DraftStreamOptions) {
     this.throttleMs = Math.max(MIN_THROTTLE_MS, options.throttleMs ?? DEFAULT_THROTTLE_MS);
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.minInitialChars = options.minInitialChars ?? 0;
     this.formatText = options.formatText;
+    this.previewThrottleMs = Math.max(0, options.previewThrottleMs ?? 1000);
     this.transport = options.transport ?? {
       sendMessage: async () => "",
       editMessage: async () => {},
@@ -130,7 +141,8 @@ export class DraftStream {
     // 笔记 25 修复：preview 发送必须串行化（thinking_delta 毫秒级到达，
     // REST sendMessage 几十~几百 ms —— 并发下 previewMessageId 竞态覆盖，
     // 每条消息都成孤儿，Discord 里思考内容大量重复）。
-    // 保留「最新值」语义：drain 期间的新预览只更新 pendingPreview。
+    // 笔记 25 性能：节流窗口内合并为最新值（Discord 消息操作限流 ~1/s/channel，
+    // 无节流时 thinking 高频 edit → 429 风暴）。
     this.pendingPreview = preview;
     void this.drainPreview();
   }
@@ -138,15 +150,27 @@ export class DraftStream {
   private previewFlushInFlight = false;
   private pendingPreview: DraftPreview | undefined;
 
-  /** 串行 drain：一次只发一个 preview，期间新到的预览合并为最新值。 */
+  /** 串行 drain：一次只发一个 preview，期间新到的预览合并为最新值；节流窗口内延后。 */
   private async drainPreview(): Promise<void> {
     if (this.previewFlushInFlight) return;
     const next = this.pendingPreview;
     if (!next) return;
+    const sinceLast = Date.now() - this.previewLastSentAtMs;
+    if (this.previewThrottleMs > 0 && sinceLast < this.previewThrottleMs) {
+      // 节流窗口内：合并为最新值，窗口结束后再发（覆盖旧定时器 = 最新值优先）
+      if (!this.previewTimer) {
+        this.previewTimer = setTimeout(() => {
+          this.previewTimer = undefined;
+          void this.drainPreview();
+        }, this.previewThrottleMs - sinceLast);
+      }
+      return;
+    }
     this.pendingPreview = undefined;
     this.previewFlushInFlight = true;
     try {
       await this.flushPreview(next);
+      this.previewLastSentAtMs = Date.now();
     } finally {
       this.previewFlushInFlight = false;
       // 处理期间又有新预览 → 继续 drain（保持串行 + 最新值优先）
@@ -214,7 +238,13 @@ export class DraftStream {
       this.failures = 0;
       await this.transport.sendChatAction("typing");
     } catch (err) {
-      const retryAfter = readRetryAfterMs(err);
+      // 笔记 25 性能：兼容 Discord 429（DiscordRateLimitError.retryAfterMs）——
+      // 只有 Telegram 格式会被 readRetryAfterMs 识别，Discord 限流会误入普通失败重试风暴
+      const retryAfter =
+        readRetryAfterMs(err) ??
+        (typeof (err as { retryAfterMs?: unknown })?.retryAfterMs === "number"
+          ? ((err as { retryAfterMs: number }).retryAfterMs)
+          : undefined);
       if (retryAfter !== undefined) {
         this.suspendedUntilMs = Date.now() + Math.min(retryAfter, MAX_PREVIEW_FLOOD_SUSPEND_MS);
       }
@@ -270,6 +300,7 @@ export class DraftStream {
 
   async clear(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
+    if (this.previewTimer) clearTimeout(this.previewTimer);
     if (this.streamMessageId !== undefined) {
       try { await this.transport.deleteMessage(this.streamMessageId); } catch { /* ignore */ }
     }

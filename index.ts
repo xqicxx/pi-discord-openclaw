@@ -250,6 +250,8 @@ export default function (pi: ExtensionAPI) {
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
   let activeChannelId: string | undefined;
+  // typing 节流（笔记 25 性能：10s 一次）
+  let lastTypingAtMs = 0;
   // 命令执行 ctx（最近一次事件 handler 的 ExtensionContext 适配，笔记 21）
   let commandCtx: CommandExecutionCtx | undefined;
   // bot username（/cmd@bot mention 剥离用，READMEY.user）
@@ -278,6 +280,11 @@ export default function (pi: ExtensionAPI) {
     },
     sendChatAction: async () => {
       if (!activeChannelId) return;
+      // 笔记 25 性能：typing 节流 10s（Discord 官方建议间隔；每次 flush 都发会触发
+      // typing 限流 5/10s → 429，且白白占用请求预算）
+      const now = Date.now();
+      if (now - lastTypingAtMs < 10_000) return;
+      lastTypingAtMs = now;
       await rest.sendChannelTyping(activeChannelId).catch(() => {});
     },
   };

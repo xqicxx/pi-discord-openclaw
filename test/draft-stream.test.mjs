@@ -72,7 +72,7 @@ const WAIT = 400; // > 250ms 最小节流
 {
   const sent = []; const edited = [];
   // sendMessage 模拟网络延迟（真实 REST 几十~几百 ms，delta 事件毫秒级到达 → 必然并发）
-  const s = new DraftStream({ throttleMs: 300, transport: {
+  const s = new DraftStream({ throttleMs: 300, previewThrottleMs: 0, transport: {
     sendMessage: async (t) => { await new Promise(r => setTimeout(r, 60)); sent.push(t); return 'm' + sent.length; },
     editMessage: async (id, t) => { await new Promise(r => setTimeout(r, 30)); edited.push({ id, t }); },
     deleteMessage: async () => {},
@@ -94,5 +94,28 @@ const WAIT = 400; // > 250ms 最小节流
   assert(sent.length === 1 && edited[edited.length - 1]?.t === 'thinking chunk 5b', '后续 preview 继续 edit 同一条消息');
   await s.stop();
 }
+// 6. preview 节流合并（笔记 25 性能）：默认 1000ms 窗口内合并最新值，不超 Discord 限流
+{
+  const sent = []; const edited = [];
+  const s = new DraftStream({ throttleMs: 300, transport: {
+    sendMessage: async (t) => { sent.push(t); return 'm' + sent.length; },
+    editMessage: async (id, t) => { edited.push({ id, t }); },
+    deleteMessage: async () => {},
+    sendChatAction: async () => {},
+  }});
+  // 首条立即发，窗口内快速更新全部合并
+  s.updatePreview({ text: 'c1', parseMode: 'Markdown' });
+  await new Promise(r => setTimeout(r, 30));
+  s.updatePreview({ text: 'c2', parseMode: 'Markdown' });
+  s.updatePreview({ text: 'c3', parseMode: 'Markdown' });
+  await new Promise(r => setTimeout(r, 500));
+  assert(sent.length === 1 && edited.length === 0, `窗口内不重复发（send=${sent.length} edit=${edited.length}）`);
+  s.updatePreview({ text: 'c4', parseMode: 'Markdown' }); // 窗口内新值合并
+  await new Promise(r => setTimeout(r, 700));
+  assert(sent.length === 1 && edited.length === 1, `窗口后只编辑一次（send=${sent.length} edit=${edited.length}）`);
+  assert(edited[0]?.t === 'c4', `编辑为窗口内最新值（实际 ${edited[0]?.t}）`);
+  await s.stop();
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
