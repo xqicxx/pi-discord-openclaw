@@ -50,7 +50,7 @@ jobs:
           {{"root_cause": "根因", "files_to_change": ["文件"], "fix_plan": "具体改法", "tests_to_run": "验证命令", "branch": "fix/issue-N-简短", "pr_title": "标题", "pr_body": "描述"}}
           先探索再输出。'''
           body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 4096}}
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 16384}}
           req = urllib.request.Request(
               f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}',
               data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})

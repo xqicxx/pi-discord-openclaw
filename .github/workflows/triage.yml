@@ -54,7 +54,7 @@ jobs:
           {{"action": "worth-fixing|wontfix|needs-info|spam", "labels": ["只放仓库里存在的标签"], "complexity": "低|中|高", "risk": "低|中|高", "reason": "2-3 句中文判定理由", "suggestion": "可选：修复建议或补充信息请求"}}'''
 
           body = {'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 8192}}
           req = urllib.request.Request(
               f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}',
               data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
