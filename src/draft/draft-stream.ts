@@ -127,8 +127,33 @@ export class DraftStream {
     if (this.suspendedUntilMs > Date.now()) return;
     const text = preview.text;
     if (text === this.previewText) return;
-    this.previewText = text;
-    void this.flushPreview(preview);
+    // 笔记 25 修复：preview 发送必须串行化（thinking_delta 毫秒级到达，
+    // REST sendMessage 几十~几百 ms —— 并发下 previewMessageId 竞态覆盖，
+    // 每条消息都成孤儿，Discord 里思考内容大量重复）。
+    // 保留「最新值」语义：drain 期间的新预览只更新 pendingPreview。
+    this.pendingPreview = preview;
+    void this.drainPreview();
+  }
+
+  private previewFlushInFlight = false;
+  private pendingPreview: DraftPreview | undefined;
+
+  /** 串行 drain：一次只发一个 preview，期间新到的预览合并为最新值。 */
+  private async drainPreview(): Promise<void> {
+    if (this.previewFlushInFlight) return;
+    const next = this.pendingPreview;
+    if (!next) return;
+    this.pendingPreview = undefined;
+    this.previewFlushInFlight = true;
+    try {
+      await this.flushPreview(next);
+    } finally {
+      this.previewFlushInFlight = false;
+      // 处理期间又有新预览 → 继续 drain（保持串行 + 最新值优先）
+      if (this.pendingPreview && !this.stopped) {
+        void this.drainPreview();
+      }
+    }
   }
 
   private scheduleFlush(): void {
@@ -145,6 +170,9 @@ export class DraftStream {
       } else {
         await this.transport.editMessage(this.previewMessageId, preview.text);
       }
+      // 笔记 25：previewText 表示「已成功投递的文本」，发送成功后才更新
+      // （updatePreview 的相等去重依赖它）
+      this.previewText = preview.text;
     } catch (err) {
       const retryAfter = readRetryAfterMs(err);
       if (retryAfter !== undefined) {

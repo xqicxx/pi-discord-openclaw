@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8: preview 并发竞态修复（笔记 25 续）
+
+- `Preview Serialization`: DraftStream.updatePreview 的发送改为串行 drain（pendingPreview 最新值合并 + previewFlushInFlight 互斥）——thinking_delta 毫秒级到达、REST sendMessage 几十~几百 ms，原实现并发 flushPreview 下 previewMessageId 竞态覆盖，每条消息都成孤儿 → Discord 里思考内容大量重复（一轮思考 15+ 条递增消息）。修复后首条 send、后续全部 edit 同一条，中间预览按最新值合并。Impact: 思考方块恢复单条流动，不再刷屏。
+- `Delivered-text Semantics`: previewText 改为「发送成功后才更新」（原同步设置，失败后相等去重会跳过恢复重试）。Impact: 网络抖动时预览可自愈。
+- `Tests`: draft-stream.test 新增并发 preview 用例（5 次快速 updatePreview → 断言 1 send + 后续 edit + 最终最新文本 + 无并发时继续 edit 同一条）。Impact: 全量测试 15 文件全绿，typecheck 通过。
+
 ## 0.1.7: 斜杠命令注册上限 + interaction 必响应修复（笔记 25）
 
 - `Registerable Command Filter`: 新增 filterDiscordRegisterableCommands——注册集排除 skill 命令（52+ 个，Discord 全局命令 100 上限会整体拒绝 PUT）+ 保底截断 100（本地+builtin 优先）。0.1.6 放开 skill 源后注册集 ≈140 超限，Discord 一直保留旧 78 命令（无 /models /help /status 等）。skill 仍保留在 merged 集：文本 /skill-xxx 本地执行不受影响。Impact: 重启后注册集 88 个（含 /models），低于 100 上限。

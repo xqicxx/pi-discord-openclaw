@@ -67,5 +67,32 @@ const WAIT = 400; // > 250ms 最小节流
   await s.stop();
 }
 
+
+// 5. preview 并发串行化（笔记 25 修复）：thinking_delta 高频到达时不得并发 sendMessage
+{
+  const sent = []; const edited = [];
+  // sendMessage 模拟网络延迟（真实 REST 几十~几百 ms，delta 事件毫秒级到达 → 必然并发）
+  const s = new DraftStream({ throttleMs: 300, transport: {
+    sendMessage: async (t) => { await new Promise(r => setTimeout(r, 60)); sent.push(t); return 'm' + sent.length; },
+    editMessage: async (id, t) => { await new Promise(r => setTimeout(r, 30)); edited.push({ id, t }); },
+    deleteMessage: async () => {},
+    sendChatAction: async () => {},
+  }});
+  // 快速连续 5 次 preview 更新（不等 await —— 模拟 thinking_delta 流）
+  for (let i = 1; i <= 5; i++) {
+    s.updatePreview({ text: 'thinking chunk ' + i, parseMode: 'Markdown' });
+  }
+  await new Promise(r => setTimeout(r, 800));
+  assert(sent.length === 1, `并发 preview 只发 1 条消息（实际 ${sent.length}）`);
+  assert(sent[0] === 'thinking chunk 1', '首条为最早文本');
+  assert(edited.length >= 1, `合并后至少 1 次 edit（实际 ${edited.length}）`);
+  const lastEdited = edited[edited.length - 1]?.t;
+  assert(lastEdited === 'thinking chunk 5', `最终编辑为最新文本（实际 ${lastEdited}）`);
+  // drain 期间到达的中间预览被合并（最新值语义），后续无并发时继续 edit 同一条
+  s.updatePreview({ text: 'thinking chunk 5b', parseMode: 'Markdown' });
+  await new Promise(r => setTimeout(r, 300));
+  assert(sent.length === 1 && edited[edited.length - 1]?.t === 'thinking chunk 5b', '后续 preview 继续 edit 同一条消息');
+  await s.stop();
+}
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);
