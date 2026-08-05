@@ -24,6 +24,7 @@ safe-outputs:
   add-labels:
     max: 5
   add-comment:
+    max: 1
   set-issue-type:
     max: 1
   close-issue:
