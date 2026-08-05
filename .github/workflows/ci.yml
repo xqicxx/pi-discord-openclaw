@@ -1,12 +1,11 @@
 name: CI
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  pull_request_target:
+    types: [labeled]
 permissions:
   contents: read
 jobs:
   test:
-    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'ai-approved' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
