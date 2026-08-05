@@ -144,12 +144,26 @@ export function loadDiscordConnectionConfig(): DiscordConnectionConfig {
         channels?: string[];
         ignoreBots?: boolean;
       };
+      const token = envToken || raw.token?.trim();
+      if (!token) {
+        throw new Error(
+          "Discord bot token not found. Please set DISCORD_BOT_TOKEN environment variable or 'token' in discord.json."
+        );
+      }
       return {
-        token: envToken || raw.token?.trim(),
+        token,
         channels: raw.channels,
         ignoreBots: raw.ignoreBots ?? true,
       };
     }
-  } catch { /* fall through */ }
-  return { token: envToken, channels: undefined, ignoreBots: true };
+  } catch (e) {
+    throw new Error(`Failed to load Discord config: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const token = envToken;
+  if (!token) {
+    throw new Error(
+      "Discord bot token not found. Please set DISCORD_BOT_TOKEN environment variable or 'token' in discord.json."
+    );
+  }
+  return { token, channels: undefined, ignoreBots: true };
 }
