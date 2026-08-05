@@ -252,6 +252,10 @@ export default function (pi: ExtensionAPI) {
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
   const activeChannelIds = new Map<string, string>();
+  // Issue #30 回归修复：pi ExtensionContext 无 chatId 字段，map 按 Discord channel_id
+  // 建 key 永远查不到 → beginTurn chatId 落到 "default" → 404 静默失败。
+  // 用「最近活跃频道」兜底（单会话模型下语义正确）。
+  let lastActiveChannelId: string | undefined;
   // typing 节流（笔记 25 性能：10s 一次）
   const lastTypingAtMs = new Map<string, number>();
   // 命令执行 ctx（最近一次事件 handler 的 ExtensionContext 适配，笔记 21）
@@ -507,6 +511,7 @@ export default function (pi: ExtensionAPI) {
     if (!content) return;
     if (conn.channels?.length && !conn.channels.includes(channelId)) return;
     activeChannelIds.set(channelId, channelId);
+    lastActiveChannelId = channelId;
 
     // 笔记 20/21：文本命令拦截（/stop /help 等本地执行，不进 agent）
     const resolved = resolveTextCommand(content, { botUsername });
@@ -621,7 +626,9 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
-    const chatId = activeChannelIds.get(ctx.chatId ?? "default") ?? "default";
+    // Issue #30 回归修复：ctx.chatId 不是 Discord channel_id（ExtensionContext 无此字段），
+    // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
+    const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
     void statusReactions?.setThinking();
   });
@@ -715,71 +722,108 @@ export default function (pi: ExtensionAPI) {
           description: truncateDiscordCommandDescription(command.description),
           options: buildDiscordCommandOptions(command),
         }));
-        try {
-          await rest.registerApplicationCommands(applicationId, commands);
-          const skippedSkills = merged.length - registerable.length;
-          console.log(
-            `${TAG} 已注册 ${commands.length} 个 slash 命令（merged=${merged.length}，跳过 skill ${skippedSkills}）`,
-          );
-        } catch (error) {
-          const detail =
-            error instanceof Error && "body" in error
-              ? JSON.stringify((error as { body?: unknown }).body)
-              : undefined;
-          console.error(
-            `${TAG} slash 命令注册失败：`,
-            error instanceof Error ? error.message : String(error),
-            detail ? `${detail}` : "",
-          );
-        }
-
         // 笔记 25 续：/skill:xxx 进 Discord —— 单个 /skill 命令 + 二级分类
-        // （subcommand groups：/skill video hyperframes；Discord 每命令 options 上限 25，
-        // 55 个 skill 分 4 组 video/dev/fabric/tools 各 ≤25）。
-        // 修复：同时注册到全局（DM 可见）和 guild（服务器内可见）。
-        // 全局命令数 88+1=89 < 100 上限，安全。
+        // （subcommand groups：/skill video hyperframes；Discord 每命令 options 上限 25）。
+        // 覆盖式注册修复：registerApplicationCommands 是 PUT 全量覆盖，必须把原生命令
+        // 与 /skill 合并成一次注册，否则第二次注册会把第一次的 88 个原生命令顶掉
+        // （现象：Discord 里只剩 /skill，原生斜杠命令全消失）。
         const skillGroups = buildSkillGroups(merged);
-        if (skillGroups.length > 0) {
-          const skillCommand = {
-            name: "skill",
-            description: "加载 skill 指令（终端 /skill:xxx 的 Discord 形式）",
-            options: skillGroups.map((group) => ({
-              type: 2, // SubcommandGroup
-              name: group.groupName,
-              description: `${group.groupName} 类 skill（${group.subs.length} 个）`,
-              options: group.subs.map(({ subName, skill }) => ({
-                type: 1, // Subcommand
-                name: subName,
-                description: truncateDiscordCommandDescription(skill.description),
-              })),
-            })),
-          };
+        const skillCommand =
+          skillGroups.length > 0
+            ? {
+                name: "skill",
+                description: "加载 skill 指令（终端 /skill:xxx 的 Discord 形式）",
+                options: skillGroups.map((group) => ({
+                  type: 2, // SubcommandGroup
+                  name: group.groupName,
+                  description: `${group.groupName} 类 skill（${group.subs.length} 个）`,
+                  options: group.subs.map(({ subName, skill }) => ({
+                    type: 1, // Subcommand
+                    name: subName,
+                    description: truncateDiscordCommandDescription(skill.description),
+                  })),
+                })),
+              }
+            : undefined;
+        // 全量 = 原生命令 + /skill（一次 PUT，避免覆盖）
+        const fullCommands = skillCommand ? [...commands, skillCommand] : commands;
+        // 注册 helper：去重（现有命令一致则跳过 PUT，省 Discord 200/天创建额度）
+        // + 全局/guild 独立容错（一个失败不影响另一个）+ 429 限流延迟重试
+        const registerCommandsForScope = async (
+          scopeLabel: string,
+          put: () => Promise<unknown>,
+          list: () => Promise<Array<{ name: string }>>,
+          attemptsLeft = 3,
+          lastRetryAfterMs = 0,
+        ): Promise<boolean> => {
           try {
-            // 全局注册（DM 可见）
-            await rest.registerApplicationCommands(applicationId, [skillCommand]);
-            console.log(
-              `${TAG} 已注册 /skill 命令（${skillGroups.length} 组 ${skillGroups.reduce((n, g) => n + g.subs.length, 0)} 个 skill）到全局（DM 可见）`,
-            );
-            // 同时注册到每个 guild（服务器内可见）
-            const guilds = await rest.listMyGuilds();
-            for (const guild of guilds) {
-              await rest.registerGuildApplicationCommands(applicationId, guild.id, [skillCommand]);
+            const existing = await list();
+            const existingNames = new Set(existing.map((c) => c.name));
+            const same =
+              existing.length === fullCommands.length &&
+              fullCommands.every((c) => existingNames.has(c.name));
+            if (same) {
               console.log(
-                `${TAG} 已注册 /skill 命令（${skillGroups.length} 组 ${skillGroups.reduce((n, g) => n + g.subs.length, 0)} 个 skill）到 guild ${guild.name ?? guild.id}`,
+                `${TAG} ${scopeLabel} 命令集无变化，跳过注册（${fullCommands.length} 个，省额度）`,
               );
+              return true;
             }
+            await put();
+            console.log(`${TAG} 已注册 ${fullCommands.length} 个 slash 命令到${scopeLabel}`);
+            return true;
           } catch (error) {
             const detail =
               error instanceof Error && "body" in error
                 ? JSON.stringify((error as { body?: unknown }).body)
                 : undefined;
             console.error(
-              `${TAG} /skill 命令注册失败：`,
+              `${TAG} ${scopeLabel} 命令注册失败：`,
               error instanceof Error ? error.message : String(error),
               detail ? `${detail}` : "",
             );
+            // 429 限流 → 延迟重试（最多再试 2 次，等待窗口上限 10 分钟）
+            const err = error as { retryAfterMs?: unknown };
+            const retryAfterMs =
+              typeof err?.retryAfterMs === "number" ? err.retryAfterMs : 0;
+            if (attemptsLeft > 1 && retryAfterMs > 0) {
+              const delay = Math.min(Math.max(retryAfterMs, lastRetryAfterMs), 600_000);
+              console.log(
+                `${TAG} ${scopeLabel} 限流，${Math.round(delay / 1000)}s 后重试（剩余 ${attemptsLeft - 1} 次）`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              return registerCommandsForScope(scopeLabel, put, list, attemptsLeft - 1, delay);
+            }
+            return false;
           }
-        }
+        };
+        const skippedSkills = merged.length - registerable.length;
+        console.log(
+          `${TAG} 命令集：merged=${merged.length}，跳过 skill ${skippedSkills}，含 /skill=${skillGroups.length} 组，共 ${fullCommands.length} 个`,
+        );
+        // 全局注册（DM 可见；限流则后台延迟重试，不阻塞 ready）
+        void registerCommandsForScope(
+          "全局",
+          () => rest.registerApplicationCommands(applicationId, fullCommands),
+          () => rest.listApplicationCommands(applicationId),
+        );
+        // guild 注册（服务器内可见、即时生效；独立额度，全局失败不影响）
+        void (async () => {
+          try {
+            const guilds = await rest.listMyGuilds();
+            for (const guild of guilds) {
+              void registerCommandsForScope(
+                `guild ${guild.name ?? guild.id}`,
+                () => rest.registerGuildApplicationCommands(applicationId, guild.id, fullCommands),
+                () => rest.listGuildApplicationCommands(applicationId, guild.id),
+              );
+            }
+          } catch (error) {
+            console.error(
+              `${TAG} guild 列表获取失败：`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        })();
       })();
     }
     console.log(`${TAG} Discord Gateway 已连接`);
