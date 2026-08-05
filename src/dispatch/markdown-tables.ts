@@ -1,8 +1,9 @@
 // Discord 输出格式化 — 原生移植 openclaw（笔记 24）。
 // 1. convertMarkdownTables：markdown 表格 → 对齐 ASCII 表格 + 代码块包裹
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
-// 2. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
-// 3. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
+// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（新）
+// 3. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
+// 4. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
 
 /** Discord 单条消息字符上限（openclaw DISCORD_TEXT_CHUNK_LIMIT）。 */
 export const DISCORD_TEXT_CHUNK_LIMIT = 2000;
@@ -106,6 +107,61 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   }
   if (!convertedAny) return markdown;
   return out.join("\n");
+}
+
+// ---- Embed 表格转换（新） ----
+
+/** Discord Embed field 结构。 */
+export interface DiscordEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+/** Discord Embed 结构（最小面）。 */
+export interface DiscordEmbed {
+  title?: string;
+  description?: string;
+  color?: number;
+  fields?: DiscordEmbedField[];
+  footer?: { text: string };
+}
+
+/**
+ * markdown 表格 → Discord Embed fields（每行一个 field，name=第一列，value=其余列）。
+ * 表头放 description，footer 放来源（可选）。
+ * 若表格超过 25 行，截断并提示。
+ */
+export function convertMarkdownTableToEmbed(markdown: string, options?: { title?: string; footer?: string; color?: number }): DiscordEmbed | null {
+  const lines = markdown.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: DiscordEmbedField[] = [];
+      const maxFields = 25;
+      const rows = block.rows.slice(0, maxFields);
+      for (const row of rows) {
+        const name = row[0] ?? "";
+        const value = row.slice(1).join(" | ") || "—";
+        fields.push({ name: name.slice(0, 256), value: value.slice(0, 1024), inline: true });
+      }
+      const truncated = block.rows.length > maxFields;
+      const embed: DiscordEmbed = {
+        title: options?.title,
+        description: block.headers.join(" | "),
+        color: options?.color,
+        fields,
+        footer: options?.footer ? { text: options.footer } : undefined,
+      };
+      if (truncated) {
+        embed.footer = { text: `${options?.footer ? options.footer + " · " : ""}截断：仅显示前 ${maxFields} 行` };
+      }
+      return embed;
+    }
+    i += 1;
+  }
+  return null;
 }
 
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----
