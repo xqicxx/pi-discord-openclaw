@@ -77,8 +77,15 @@ jobs:
           print('finishReason:', data.get('candidates',[{}])[0].get('finishReason'), '| output chars:', len(text))
           verdict = parse_json(text)
 
+          import re
+          def sanitize(s):
+              if not s: return ''
+              s = s.replace('<', '&lt;').replace('>', '&gt;')
+              s = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', s)
+              return s
+
           action = verdict['action']
-          reason = verdict.get('reason', '')
+          reason = sanitize(verdict.get('reason', ''))
           has = set(l["name"] for l in json.loads(gh('label', 'list', '--json', 'name')))
 
           if action == 'spam':
