@@ -375,8 +375,18 @@ export async function executeCommand(
       return reply(TERMINAL_ONLY("clone"));
     case "resume":
       return reply(TERMINAL_ONLY("resume", "<session>"));
-    case "reload":
-      return reply(TERMINAL_ONLY("reload"));
+    case "reload": {
+      // 热重载扩展/skills/prompts/themes（需环境变量 RELOAD_ALLOWED=1 才允许远程触发，默认关闭）
+      if (process.env.RELOAD_ALLOWED !== "1") {
+        return reply("⚠️ 远程 /reload 未启用。如需从 Discord 热重载，请设置环境变量 RELOAD_ALLOWED=1 后重启服务。");
+      }
+      try {
+        await pi.reload();
+        return reply("♻️ 已热重载扩展/skills/prompts/themes。");
+      } catch (err) {
+        return reply(`❌ /reload 执行失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     case "login":
       return reply(TERMINAL_ONLY("login", "<provider>"));
     case "logout":
