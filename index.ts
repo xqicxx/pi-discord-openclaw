@@ -358,6 +358,7 @@ export default function (pi: ExtensionAPI) {
       // maxLineChars 收敛思考行长度（openclaw progress.maxLineChars）
       receiptSummary: cfg.streaming.receiptSummary,
       maxLineChars: cfg.streaming.maxLineChars,
+      maxProgressLines: cfg.toolProgress.maxLines,
       // 笔记 30：投递失败发到 discord（不再静默丢消息）
       onDeliveryFailed: (error, context) => notifyError(`投递失败（${context}）`, error),
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
@@ -370,7 +371,9 @@ export default function (pi: ExtensionAPI) {
         if (mode === "embed") {
           const converted = convertTextWithTables(stripped);
           if (converted) return { content: converted.content, embeds: converted.embeds };
-          return convertMarkdownTables(stripped, "code");
+          // 笔记 30：表格在中间等不适合 embed 的场景（embed 只能在 content 下方）——
+          // 回退 bullets（第一列加粗 + 子弹列表），位置正确且不生硬（openclaw 语义）
+          return convertMarkdownTables(stripped, "bullets");
         }
         return convertMarkdownTables(stripped, mode === "off" ? "off" : "code");
       },

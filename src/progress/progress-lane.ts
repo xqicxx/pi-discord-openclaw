@@ -37,7 +37,7 @@ export interface ToolProgressEvent {
   ok?: boolean;
 }
 
-const MAX_LINE_CHARS = 300;
+const MAX_LINE_CHARS = 100; // 笔记 30：工具命令 detail 截断 300→100，方块更紧凑
 /** 笔记 19: 思维行默认字符预算（openclaw progress.maxLineChars 默认 120）。 */
 const DEFAULT_THINKING_MAX_CHARS = 120;
 /** 笔记 19: 思考/回答分离正则（openclaw progress-draft-status-text）。 */
@@ -197,9 +197,11 @@ export function renderProgressLine(line: ProgressLine): string {
   return escapeDiscordMarkdown(label);
 }
 
-/** Discord Markdown 转义（` * _ [ ] 需转义；保留换行）。 */
+/** Discord Markdown 转义（` * _ [ ] # > - + 需转义；保留换行）。
+ *  笔记 30：加 #（行首被 Discord 渲染成巨大标题）、>（引用块）、-/+（列表）——
+ *  思考/工具方块里不该出现超大标题和列表变形。 */
 export function escapeDiscordMarkdown(text: string): string {
-  return text.replace(/([\\\`*_\[\]])/g, "\\$1");
+  return text.replace(/([\\\`*_\[\]#>\-+])/g, "\\$1");
 }
 
 /** 整个进度草稿渲染（多行 <br>）。 */

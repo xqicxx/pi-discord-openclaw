@@ -201,3 +201,57 @@ async stop() {
   `⏳(收到/排队) → 👀(agent_start 开工) → 🧠(thinking_delta) → 🛠️(工具) → ✅(完成,清理其他)`
 - 表情为 openclaw「只增不减 + 终态清理」语义：Discord 上一排小表情表示状态演进，终态 ✅ 时移除其余
 - 与 openclaw 差异：openclaw queued=👀；本实现 queued=⏳、working=👀——「排队/处理」视觉分离，更符合用户直觉
+
+---
+
+## 八、表格模式调研与实现（笔记 30 补充）
+
+### openclaw 的表格方案（源码实锤，packages/markdown-core）
+markdown.tables 有 **4 种模式**：`off | bullets | code | block`（block 实际映射为 code）
+
+**bullets 模式**（renderTableAsBullets，ir.ts:916）——解决「位置 + 生硬」的关键：
+- 多列表格：**第一列 → 行标签（加粗）**，其余列 → 子弹列表 `• 列名: 值`
+- 单列表格：全部 `• 列名: 值`
+- 示例：
+  ```
+  | Feature | SQLite | Postgres |
+  → **Speed**
+    • SQLite: Fast
+    • Postgres: Medium
+  ```
+
+### 为什么 bullets 是答案
+| 方案 | 位置 | 视觉 |
+|---|---|---|
+| embed fields | ❌ 只能在 content 下方（中间表格被挤到最后）| ✅ 卡片好看 |
+| ASCII code 块 | ✅ 原位 | ❌ 生硬（代码块样式）|
+| **bullets** | ✅ **原位（普通文本）** | ✅ 子弹列表 + 加粗标签，Discord 原生渲染 |
+
+### 实现方案（pi-discord）
+- `convertMarkdownTables` 扩展支持 "bullets"（移植 openclaw 语义，用现有 parseTableBlock）
+- index.ts formatAnswerText（tableMode=embed 时）：
+  - 表格在末尾/纯表格 → **embed**（美观）
+  - 表格在中间（convertTextWithTables 回退）→ **bullets**（保位置 + 不生硬）
+- 显式 tableMode=code/off 保持原行为
+
+---
+
+## 九、思考/工具方块"超级大字"根因（笔记 30 补充）
+
+### 现象
+思考/工具方块里出现**超大标题**（如 `# 已有记忆的 files 集合` 被 Discord 渲染成巨大标题）
+
+### 根因
+`escapeDiscordMarkdown` 只转义 ` * _ [ ]，**没转义 `#`**——Discord 把行首 `#` 渲染成标题（巨大字体）。
+工具行 detail（命令文本）或思考文本里含 `#` 开头行 → 方块出现大字。
+
+### 修复
+`escapeDiscordMarkdown` 补转义：`#`（标题=大字）、`>`（引用块）、`- + `（列表）：
+```
+text.replace(/([\\\`*_\[\]#>\-+])/g, "\\$1")
+```
+- 效果：`# 已有记忆` → `\# 已有记忆`（显示为普通文字）
+- 只影响方块（思考/工具行）；最终回答的 markdown 标题（## xxx）**保留正常渲染**（agent 正式回复可以用标题）
+
+### 开源对照
+openclaw 的 progress 行同样有转义（escapeDiscordMarkdown），本修复补齐了 # > - + 的缺口。

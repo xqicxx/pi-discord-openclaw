@@ -87,7 +87,10 @@ function renderAsciiTable(block: TableBlock): string {
  *   | --- | --- |
  *   | 1   | 2   |
  */
-export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "code"): string {
+export function convertMarkdownTables(
+  markdown: string,
+  mode: "code" | "bullets" | "off" = "code",
+): string {
   if (!markdown || mode === "off") return markdown;
   const lines = markdown.split("\n");
   const out: string[] = [];
@@ -96,7 +99,9 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   while (i < lines.length) {
     const block = parseTableBlock(lines, i);
     if (block) {
-      out.push("```", renderAsciiTable(block), "```");
+      // 笔记 30：bullets 模式（openclaw renderTableAsBullets）——
+      // 第一列=行标签（加粗），其余列=子弹列表，位置正确且不生硬
+      out.push(mode === "bullets" ? renderBulletsTable(block) : "```" + "\n" + renderAsciiTable(block) + "\n" + "```");
       convertedAny = true;
       i += 2 + block.rows.length;
     } else {
@@ -136,6 +141,41 @@ export function convertMarkdownTableToEmbed(markdown: string): { embeds: unknown
     i += 1;
   }
   return null;
+}
+
+/** 笔记 30：表格 → 子弹列表（openclaw renderTableAsBullets 语义）。
+ *  多列：第一列=行标签（加粗），其余列 • 列名: 值；单列：全部 • 列名: 值。 */
+function renderBulletsTable(block: TableBlock): string {
+  const headers = block.headers.map((h) => h.trim());
+  const rows = block.rows.map((r) => r.map((c) => c.trim()));
+  if (headers.length === 0 && rows.length === 0) return "";
+  const lines: string[] = [];
+  const useLabel = headers.length > 1 && rows.length > 0;
+  if (useLabel) {
+    for (const row of rows) {
+      if (row.length === 0) continue;
+      const label = row[0];
+      if (label) lines.push("**" + label + "**");
+      for (let i = 1; i < row.length; i++) {
+        const value = row[i];
+        if (!value) continue;
+        const header = headers[i];
+        lines.push("• " + (header ? header + ": " : "") + value);
+      }
+      lines.push("");
+    }
+  } else {
+    for (const row of rows) {
+      for (let i = 0; i < row.length; i++) {
+        const value = row[i];
+        if (!value) continue;
+        const header = headers[i];
+        lines.push("• " + (header ? header + ": " : "") + value);
+      }
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trimEnd();
 }
 
 /**
