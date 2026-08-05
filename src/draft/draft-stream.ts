@@ -251,7 +251,7 @@ export class DraftStream {
       // Extra chunks become separate follow-up messages (openclaw parity).
       // Issue #1 修复：只投递「新增」的后续块；已投递块不重复发送。
       // 追加语义下 chunks[0] 前缀不变，主消息 editMessage 幂等。
-      // Issue #12 修复：已发送的独立 chunk 消息按 index 更新，而不是只发新块。
+      // Issue #12 修复：已发送的独立 chunk 消息按 index 更新（而非只发新块）。
       for (let i = 1; i < chunks.length; i++) {
         if (i - 1 < this.chunkMessageIds.length) {
           // 已发送过 → 更新内容
@@ -260,6 +260,13 @@ export class DraftStream {
           // 新块 → 发送并记录 ID
           const id = await this.transport.sendMessage(chunks[i]);
           this.chunkMessageIds.push(id);
+        }
+      }
+      // 若块数减少，删除多余的独立消息（可选，但保持一致性）
+      while (this.chunkMessageIds.length > chunks.length - 1) {
+        const extraId = this.chunkMessageIds.pop();
+        if (extraId) {
+          try { await this.transport.deleteMessage(extraId); } catch { /* ignore */ }
         }
       }
       this.deliveredChunkCount = Math.max(this.deliveredChunkCount, chunks.length);
