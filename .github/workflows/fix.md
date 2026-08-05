@@ -17,8 +17,7 @@ engine:
 safe-outputs:
   create-pull-request:
     auto-close-issue: true
-    allowed-base-branches:
-      - master
+    allowed-base-branches: [master]
   add-comment:
   update-issue:
   noop:
