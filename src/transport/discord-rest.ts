@@ -159,6 +159,22 @@ export class DiscordRest {
   ): Promise<DiscordApplicationCommand[]> {
     return this.request<DiscordApplicationCommand[]>("PUT", `/applications/${applicationId}/commands`, commands);
   }
+
+  /** GET /applications/{id}/commands — 现有全局命令（注册去重对比）。 */
+  async listApplicationCommands(applicationId: Snowflake): Promise<DiscordApplicationCommand[]> {
+    return this.request<DiscordApplicationCommand[]>("GET", `/applications/${applicationId}/commands`);
+  }
+
+  /** GET /applications/{id}/guilds/{gid}/commands — 现有 guild 命令（注册去重对比）。 */
+  async listGuildApplicationCommands(
+    applicationId: Snowflake,
+    guildId: Snowflake,
+  ): Promise<DiscordApplicationCommand[]> {
+    return this.request<DiscordApplicationCommand[]>(
+      "GET",
+      `/applications/${applicationId}/guilds/${guildId}/commands`,
+    );
+  }
   /**
    * PUT /applications/{id}/guilds/{gid}/commands — guild 级注册（笔记 25 续：
    * skills 走 guild 额度，全局 100 上限之外独立 100/guild，绕过全局超限）。

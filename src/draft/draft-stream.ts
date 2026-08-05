@@ -199,7 +199,10 @@ export class DraftStream {
   private scheduleFlush(): void {
     if (this.timer) return;
     const wait = Math.max(0, this.suspendedUntilMs - Date.now());
-    this.timer = setTimeout(() => void this.flush(), Math.max(wait, this.throttleMs));
+    // 首字延迟优化：首条消息（尚无任何已投递消息）立即发送，不等待 throttleMs；
+    // 后续编辑才节流（throttleMs），避免回复迟迟不出让用户以为 bot 死了。
+    const first = this.streamMessageId === undefined && this.previewMessageId === undefined;
+    this.timer = setTimeout(() => void this.flush(), Math.max(wait, first ? 0 : this.throttleMs));
   }
 
   private async flushPreview(preview: DraftPreview): Promise<void> {
@@ -221,8 +224,14 @@ export class DraftStream {
     }
   }
 
+  private flushing = false;
+
   async flush(): Promise<void> {
     this.timer = undefined;
+    // 并发防重入（首条立即发后，sendMessage 飞行期间新 delta 到达会触发第二个
+    // flush：streamMessageId 尚未赋值 → 重复发送同一条回复）。飞行中直接返回，
+    // 新数据已累积在 pendingText，飞行结束（finally）会重新调度。
+    if (this.flushing) return;
     if (this.stopped || !this.pendingText) return;
     if (this.suspendedUntilMs > Date.now()) {
       this.scheduleFlush();
@@ -239,6 +248,7 @@ export class DraftStream {
     // Issue #1 修复：进入飞行前锁定基线；飞行期间 updateDelta 以它为前缀累积。
     // finally 中清空，保证飞行窗口外的 updateDelta 回落到 deliveredText 基线。
     this.inFlightText = rawText;
+    this.flushing = true;
     try {
       // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
       const formatted = this.formatText ? this.formatText(rawText) : rawText;
@@ -293,6 +303,13 @@ export class DraftStream {
         this.suspendedUntilMs = Date.now() + Math.min(retryAfter, MAX_PREVIEW_FLOOD_SUSPEND_MS);
       }
       this.failures++;
+      // 超过最大失败次数时留日志（此前静默放弃，出站坏掉完全无痕）
+      if (this.failures === MAX_CONSECUTIVE_FAILURES + 1) {
+        console.error(
+          `[draft-stream] 投递失败 ${MAX_CONSECUTIVE_FAILURES} 次后放弃（streamMessageId=${this.streamMessageId ?? "new"}）: `,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       if (this.failures <= MAX_CONSECUTIVE_FAILURES) {
         // Issue #1 修复：重试保留完整累积。恢复未投递增量 =
         // 本次 rawText 超出 deliveredText 的部分 + 飞行中新累积的 pendingDelta，
@@ -303,6 +320,11 @@ export class DraftStream {
       }
     } finally {
       this.inFlightText = "";
+      this.flushing = false;
+      // 飞行期间又有新 delta 累积 → 重排（此时 streamMessageId 已赋值，走编辑路径）
+      if (this.pendingText && !this.stopped) {
+        this.scheduleFlush();
+      }
     }
   }
 
@@ -368,6 +390,7 @@ export class DraftStream {
     this.inFlightText = "";
     this.pendingDelta = "";
     this.pendingText = "";
+    this.flushing = false;
     this.stopped = false;
   }
 }
