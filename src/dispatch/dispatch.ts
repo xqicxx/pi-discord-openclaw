@@ -204,6 +204,16 @@ export class OpenclawBridge {
       debounceMs: params.config.debounceMs,
       onFlush: async (entries) => {
         const text = entries.map((e) => e.text).join("\n");
+        // 笔记 29：turn 活跃时收到新消息 → 先中断当前 agent（onInterrupt），
+        // 再处理新消息（对齐 openclaw resolveActiveRunQueueAction 默认 run-now；
+        // 旧任务不再阻塞新消息，避免「bot 没动静」）
+        if (this.turn && !this.turn.isSuperseded()) {
+          try {
+            this.onInterrupt?.();
+          } catch {
+            // 忽略中断失败
+          }
+        }
         await this.onUserInput?.(text);
       },
     });
@@ -214,6 +224,9 @@ export class OpenclawBridge {
   /** 宿主中断回调（笔记 28）：abortTurn/abortCurrentTurn 时真正中断 agent（pi ctx.abort()），
    *  否则只清 bridge 状态，agent 还在跑（「超时但没停止」）。 */
   onAbort?: () => void;
+  /** 宿主「新消息中断」回调（笔记 29）：turn 活跃时收到新用户消息 → 中断当前 agent
+   *  再处理新消息（对齐 openclaw run-now 默认，避免 followUp 排队等旧任务卡死）。 */
+  onInterrupt?: () => void;
 
   /** 用户发消息 → debounce 合并（笔记 04）。 */
   pushUserMessage(text: string, chatId: string): void {
