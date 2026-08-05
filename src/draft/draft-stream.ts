@@ -39,10 +39,10 @@ export interface DraftStreamOptions {
 }
 
 export interface DraftTransport {
-  sendMessage: (text: string) => Promise<string>;
-  editMessage: (messageId: string, text: string) => Promise<void>;
-  deleteMessage: (messageId: string) => Promise<void>;
-  sendChatAction: (action: "typing") => Promise<void>;
+  sendMessage: (chatId: string, text: string) => Promise<string>;
+  editMessage: (chatId: string, messageId: string, text: string) => Promise<void>;
+  deleteMessage: (chatId: string, messageId: string) => Promise<void>;
+  sendChatAction: (chatId: string) => Promise<void>;
 }
 
 /** Preview payload for the ephemeral progress/reasoning box. */

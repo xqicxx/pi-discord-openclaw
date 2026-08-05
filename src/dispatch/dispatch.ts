@@ -42,10 +42,10 @@ export interface OpenclawBridgeConfig {
 }
 
 export interface DiscordDelivery {
-  sendMessage: (text: string) => Promise<string>;
-  editMessage: (messageId: string, text: string) => Promise<void>;
-  deleteMessage: (messageId: string) => Promise<void>;
-  sendChatAction: (action: "typing") => Promise<void>;
+  sendMessage: (chatId: string, text: string) => Promise<string>;
+  editMessage: (chatId: string, messageId: string, text: string) => Promise<void>;
+  deleteMessage: (chatId: string, messageId: string) => Promise<void>;
+  sendChatAction: (chatId: string) => Promise<void>;
 }
 
 /**
@@ -76,10 +76,10 @@ export class TurnManager {
     this.turnId = `${params.chatId}:${params.messageId ?? this.startedAt}`;
 
     const transport: DraftTransport = {
-      sendMessage: params.delivery.sendMessage,
-      editMessage: params.delivery.editMessage,
-      deleteMessage: params.delivery.deleteMessage,
-      sendChatAction: params.delivery.sendChatAction,
+      sendMessage: (text) => params.delivery.sendMessage(this.chatId, text),
+      editMessage: (messageId, text) => params.delivery.editMessage(this.chatId, messageId, text),
+      deleteMessage: (messageId) => params.delivery.deleteMessage(this.chatId, messageId),
+      sendChatAction: () => params.delivery.sendChatAction(this.chatId),
     };
 
     // 笔记 08: answer lane（主回答流式）
@@ -183,10 +183,21 @@ export class OpenclawBridge {
   private delivery: DiscordDelivery;
   private turn: TurnManager | undefined;
   private debouncer: InboundDebouncer;
+  private rest: DiscordRest;
+  private statusReactionConfig: OpenclawStyleConfig["statusReactions"];
+  private currentStatusReactions: StatusReactionController | undefined;
+  private lastUserMessageChatId: string | undefined; // To store the chatId of the last user message
 
-  constructor(params: { delivery: DiscordDelivery; config: OpenclawBridgeConfig }) {
+  constructor(params: {
+    delivery: DiscordDelivery;
+    config: OpenclawBridgeConfig;
+    rest: DiscordRest;
+    statusReactionConfig: OpenclawStyleConfig["statusReactions"];
+  }) {
     this.delivery = params.delivery;
     this.config = params.config;
+    this.rest = params.rest;
+    this.statusReactionConfig = params.statusReactionConfig;
     this.debouncer = new InboundDebouncer({
       debounceMs: params.config.debounceMs,
       onFlush: async (entries) => {
@@ -207,6 +218,7 @@ export class OpenclawBridge {
       receivedAtMs: Date.now(),
       lane: "default",
     });
+    this.lastUserMessageChatId = chatId;
   }
 
   /** 开始新 turn（agent-start）。 */
@@ -233,11 +245,30 @@ export class OpenclawBridge {
     return this.turn?.handleActivity(event) ?? false;
   }
 
+  /** Set up initial status reactions for a message. */
+  setupInitialStatusReactions(chatId: string, messageId: string): void {
+    const adapter = createDiscordReactionAdapter(this.rest, chatId, messageId);
+    this.currentStatusReactions = createStatusReactionController({
+      adapter,
+      enabled: this.statusReactionConfig?.enabled ?? true,
+      emojis: this.statusReactionConfig?.emojis,
+      timing: this.statusReactionConfig?.timing,
+    });
+    void this.currentStatusReactions.setQueued();
+    void queueInitialAckReaction({ adapter });
+  }
+
+  /** Get the current status reaction controller. */
+  getStatusReactions(): StatusReactionController | undefined {
+    return this.currentStatusReactions;
+  }
+
   /** agent-end：收尾当前 turn。 */
   async endTurn(): Promise<void> {
     if (this.turn) {
       await this.turn.endTurn();
       this.turn = undefined;
     }
+    this.currentStatusReactions = undefined; // Clear status reactions on turn end
   }
 }

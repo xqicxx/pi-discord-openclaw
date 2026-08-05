@@ -250,10 +250,8 @@ export default function (pi: ExtensionAPI) {
   const rest = new DiscordRest({ token: conn.token });
   const gateway = new DiscordGateway({ token: conn.token, intents: DISCORD_INTENTS });
 
-  // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
-  let activeChannelId: string | undefined;
   // typing 节流（笔记 25 性能：10s 一次）
-  let lastTypingAtMs = 0;
+  const lastTypingAtMs = new Map<string, number>();
   // 命令执行 ctx（最近一次事件 handler 的 ExtensionContext 适配，笔记 21）
   let commandCtx: CommandExecutionCtx | undefined;
   // bot username（/cmd@bot mention 剥离用，READMEY.user）
@@ -266,28 +264,25 @@ export default function (pi: ExtensionAPI) {
   const rpc = new PiRpcBridge({ idleMs: 30_000 });
 
   const delivery: DiscordDelivery = {
-    sendMessage: async (text) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      const sent = await rest.createChannelMessage(activeChannelId, { content: text });
+    sendMessage: async (chatId, text) => {
+      const sent = await rest.createChannelMessage(chatId, { content: text });
       if (!sent.id) throw new Error(`${TAG} sendMessage: no message id`);
       return sent.id;
     },
-    editMessage: async (messageId, text) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      await rest.editChannelMessage(activeChannelId, messageId, text);
+    editMessage: async (chatId, messageId, text) => {
+      await rest.editChannelMessage(chatId, messageId, text);
     },
-    deleteMessage: async (messageId) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      await rest.deleteChannelMessage(activeChannelId, messageId);
+    deleteMessage: async (chatId, messageId) => {
+      await rest.deleteChannelMessage(chatId, messageId);
     },
-    sendChatAction: async () => {
-      if (!activeChannelId) return;
+    sendChatAction: async (chatId) => {
       // 笔记 25 性能：typing 节流 10s（Discord 官方建议间隔；每次 flush 都发会触发
       // typing 限流 5/10s → 429，且白白占用请求预算）
       const now = Date.now();
-      if (now - lastTypingAtMs < 10_000) return;
-      lastTypingAtMs = now;
-      await rest.sendChannelTyping(activeChannelId).catch(() => {});
+      const lastSent = lastTypingAtMs.get(chatId) ?? 0;
+      if (now - lastSent < 10_000) return;
+      lastTypingAtMs.set(chatId, now);
+      await rest.sendChannelTyping(chatId).catch(() => {});
     },
   };
 
@@ -306,6 +301,8 @@ export default function (pi: ExtensionAPI) {
       formatAnswerText: (text) =>
         convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code"),
     },
+    rest,
+    statusReactionConfig: cfg.statusReactions,
   });
 
   // ---- 命令系统（笔记 20/21）----
@@ -499,8 +496,7 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  // 入站：Gateway MESSAGE_CREATE → 过滤 → 文本命令拦截 → ack(👀) → debounce → pi
-  let statusReactions: StatusReactionController | undefined;
+
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -559,15 +555,7 @@ export default function (pi: ExtensionAPI) {
 
     // 普通消息：ack + 提交 pi
     // 笔记 23：收到消息立即 setQueued（👀 走 controller，与 openclaw 一致）
-    const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
-    statusReactions = createStatusReactionController({
-      adapter,
-      enabled: cfg.statusReactions?.enabled ?? true,
-      emojis: cfg.statusReactions?.emojis,
-      timing: cfg.statusReactions?.timing,
-    });
-    void statusReactions.setQueued();
-    void queueInitialAckReaction({ adapter });
+    bridge.setupInitialStatusReactions(channelId, message.id);
     bridge.pushUserMessage(content, channelId);
   });
 
@@ -624,8 +612,8 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
-    bridge.beginTurn({ chatId: activeChannelId ?? "default" });
-    void statusReactions?.setThinking();
+    bridge.beginTurn({ chatId: bridge.lastUserMessageChatId ?? "default" });
+    void bridge.getStatusReactions()?.setThinking();
   });
   pi.on("message_update", (event, ctx) => {
     captureCtx(ctx);
@@ -641,7 +629,7 @@ export default function (pi: ExtensionAPI) {
       args: event.args as Record<string, unknown> | undefined,
     });
     // 笔记 23：工具分类表情（💻/🌐/🏗️/🛫/💁/🛠️，按工具名）
-    void statusReactions?.setTool(event.toolName);
+    void bridge.getStatusReactions()?.setTool(event.toolName);
   });
   pi.on("tool_execution_update", (event, ctx) => {
     captureCtx(ctx);
@@ -663,7 +651,7 @@ export default function (pi: ExtensionAPI) {
     captureCtx(ctx);
     void bridge.endTurn();
     // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
-    const reactions = statusReactions;
+    const reactions = bridge.getStatusReactions();
     const srCfg = cfg.statusReactions;
     if (reactions && srCfg?.enabled !== false) {
       void (async () => {
@@ -782,9 +770,9 @@ export default function (pi: ExtensionAPI) {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
     // 笔记 23：错误 → ❌（终态 hold 后 clear）
     void (async () => {
-      await statusReactions?.setError();
+      await bridge.getStatusReactions()?.setError();
       await sleepMs(STATUS_TIMING.errorHoldMs);
-      await statusReactions?.clear();
+      await bridge.getStatusReactions()?.clear();
     })();
   });
   gateway.connect();
