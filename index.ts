@@ -86,7 +86,7 @@ const ABORT_TRIGGERS = new Set([
   "stop do not do anything", "stop doing anything",
   "do not do that", "please stop", "stop please",
 ]);
-const TRAILING_ABORT_PUNCTUATION_RE = /[.!?！？…,，。;；:：'"’”)]}]+$/u;
+const TRAILING_ABORT_PUNCTUATION_RE = /[.!?！？…,，。;；:：'"’")\]\}]+$/u;
 
 /** 归一化触发词（小写、去尾部标点、空白折叠）。 */
 function normalizeAbortTriggerText(text: string): string {
