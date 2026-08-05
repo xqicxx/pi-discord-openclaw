@@ -6,6 +6,7 @@ import {
   filterGuildRegisterableCommands,
   extractSkillSubcommands,
   findSkillBySubcommand,
+  buildSkillGroups,
   mergeCommandSets,
   findMergedCommandByNativeName,
   sanitizeDiscordCommandName,
@@ -162,6 +163,39 @@ function assert(cond, label) {
   assert(findSkillBySubcommand(merged, 'github')?.key === 'pi:skill:skill-github', '按子命令查回 skill 命令');
   assert(findSkillBySubcommand(merged, 'nope') === undefined, '未知子命令 undefined');
   assert(findSkillBySubcommand(merged, 'GITHUB')?.nativeName === 'skill-github', '子命令查大小写不敏感');
+}
+
+// 9. skill 二级分类（笔记 25 续）：subcommand groups，每组 ≤25（Discord options 上限）
+{
+  const fakePi = {
+    getCommands: () => [
+      { name: 'skill:hyperframes', description: 'HF', source: 'skill', sourceInfo: {} },
+      { name: 'skill:brainstorming', description: 'BS', source: 'skill', sourceInfo: {} },
+      { name: 'skill:fabric-exec', description: 'FE', source: 'skill', sourceInfo: {} },
+      { name: 'skill:reading', description: 'RD', source: 'skill', sourceInfo: {} },
+      { name: 'skill:mystery-tool', description: 'MT', source: 'skill', sourceInfo: {} },
+    ],
+  };
+  const merged = mergeCommandSets(buildBuiltinCommands(), collectPiRuntimeCommands(fakePi));
+  const groups = buildSkillGroups(merged);
+  const byName = Object.fromEntries(groups.map((g) => [g.groupName, g.subs.map((s) => s.subName)]));
+  assert(byName.video?.includes('hyperframes'), 'video 组含 hyperframes');
+  assert(byName.dev?.includes('brainstorming'), 'dev 组含 brainstorming');
+  assert(byName.fabric?.includes('fabric-exec'), 'fabric 组含 fabric-exec');
+  assert(byName.tools?.includes('reading') && byName.tools?.includes('mystery-tool'), 'tools 兜底未命中名单');
+  assert(groups.every((g) => g.subs.length <= 25), '每组 ≤25（Discord options 上限）');
+  assert(groups.reduce((n, g) => n + g.subs.length, 0) === 5, `全部 skill 覆盖（实际 ${groups.reduce((n, g) => n + g.subs.length, 0)}）`);
+
+  // 真实规模：56 个 skill 分组后每组仍 ≤25
+  const many = Array.from({ length: 56 }, (_, i) => ({
+    key: 's' + i,
+    nativeName: 'skill-' + i,
+    description: 'x',
+    textAliases: [], scope: 'native',
+    source: 'skill',
+  }));
+  const big = buildSkillGroups(many);
+  assert(big.every((g) => g.subs.length <= 25), `56 个 skill 每组仍 ≤25（实际 ${big.map((g) => g.subs.length).join('/')}）`);
 }
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0) process.exit(1);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.12: /skill 二级分类（subcommand groups，笔记 25 续）
+
+- `Skill Category Groups`: 55 个 skill 按类别分组成 subcommand groups（/skill video hyperframes 两级选择）——Discord 每个命令 options 上限 25（含 subcommand/group），单层 55 个子命令 PUT 被拒（BASE_TYPE_MAX_LENGTH: Must be 25 or fewer）。分组：video 19 / dev 14 / fabric 12 / tools 10（未命中名单兜底），各 ≤25。新增 buildSkillGroups（SKILL_CATEGORY_NAMES 名单 + tools 兜底 + 每组长上限 25）。
+- `Two-level Interaction`: handleInteraction 解析 group(type=2) → subcommand(type=1) 两级，命中后本地执行 SKILL.md 指令。
+- `Tests`: pi-commands.test 新增分组用例（类别归属/tools 兜底/每组 ≤25/56 个规模摊分）。Impact: 全量测试 15 文件全绿，typecheck 通过。
+
 ## 0.1.11: /skill 子命令分类（笔记 25 续）
 
 - `Skill Subcommand Grouping`: 55 个平铺 /skill-xxx 收拢为单个 /skill 命令 + 每 skill 一个子命令（/skill github /skill reading…）。新增 extractSkillSubcommands（子命令名 = nativeName 去 skill- 前缀，去重冲突防御）+ findSkillBySubcommand（分发查询）；handleInteraction 识别 type=1 子命令 → 本地执行 SKILL.md 指令。guild 注册 PUT 全量覆盖，旧 55 个顶级命令自动替换。Impact: Discord 命令面板清爽分类，/skill 下拉即选。

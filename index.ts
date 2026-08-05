@@ -51,8 +51,8 @@ import {
   truncateDiscordCommandDescription,
 } from "./src/commands/options.ts";
 import {
+  buildSkillGroups,
   collectPiRuntimeCommands,
-  extractSkillSubcommands,
   filterDiscordRegisterableCommands,
   findSkillBySubcommand,
   loadPiBuiltinCommands,
@@ -435,9 +435,10 @@ export default function (pi: ExtensionAPI) {
         await respondInteraction(interaction, result.content, result.ephemeral ?? true);
         return;
       }
-      // 笔记 25 续：/skill <子命令> → 子命令对应的 skill 命令（/skill github 而非 skill-github）
+      // 笔记 25 续：/skill <组> <skill> → 二级解析（group type=2 → subcommand type=1）
       if (name === "skill" && merged) {
-        const subOption = interaction.data?.options?.find((o) => o.type === 1);
+        const groupOption = interaction.data?.options?.find((o) => o.type === 2);
+        const subOption = groupOption?.options?.find((o) => o.type === 1);
         const subCommand = subOption?.name ? findSkillBySubcommand(merged, subOption.name) : undefined;
         if (subCommand) {
           const ok = await executeDynamicSourceCommand(subCommand);
@@ -733,17 +734,23 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
-        // 笔记 25 续：/skill:xxx 进 Discord —— 单个 /skill 命令 + 每 skill 一个子命令
-        // （/skill github /skill reading…），guild 级注册（1+55=56 ≤ 100/guild 额度）
-        const skillSubs = extractSkillSubcommands(merged);
-        if (skillSubs.length > 0) {
+        // 笔记 25 续：/skill:xxx 进 Discord —— 单个 /skill 命令 + 二级分类
+        // （subcommand groups：/skill video hyperframes；Discord 每命令 options 上限 25，
+        // 55 个 skill 分 4 组 video/dev/fabric/tools 各 ≤25），guild 级注册（≤100/guild）
+        const skillGroups = buildSkillGroups(merged);
+        if (skillGroups.length > 0) {
           const skillCommand = {
             name: "skill",
             description: "加载 skill 指令（终端 /skill:xxx 的 Discord 形式）",
-            options: skillSubs.map(({ subName, skill }) => ({
-              type: 1, // Subcommand
-              name: subName,
-              description: truncateDiscordCommandDescription(skill.description),
+            options: skillGroups.map((group) => ({
+              type: 2, // SubcommandGroup
+              name: group.groupName,
+              description: `${group.groupName} 类 skill（${group.subs.length} 个）`,
+              options: group.subs.map(({ subName, skill }) => ({
+                type: 1, // Subcommand
+                name: subName,
+                description: truncateDiscordCommandDescription(skill.description),
+              })),
             })),
           };
           try {
@@ -751,7 +758,7 @@ export default function (pi: ExtensionAPI) {
             for (const guild of guilds) {
               await rest.registerGuildApplicationCommands(applicationId, guild.id, [skillCommand]);
               console.log(
-                `${TAG} 已注册 /skill 命令（${skillSubs.length} 个子命令）到 guild ${guild.name ?? guild.id}`,
+                `${TAG} 已注册 /skill 命令（${skillGroups.length} 组 ${skillGroups.reduce((n, g) => n + g.subs.length, 0)} 个 skill）到 guild ${guild.name ?? guild.id}`,
               );
             }
           } catch (error) {

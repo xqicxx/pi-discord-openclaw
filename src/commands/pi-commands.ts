@@ -212,6 +212,63 @@ export function findSkillBySubcommand(
   if (!sub) return undefined;
   return extractSkillSubcommands(merged).find((s) => s.subName === sub)?.skill;
 }
+/**
+ * 笔记 25 续：/skill 二级分类（Discord 每个命令 options 上限 25，含 subcommand/group）。
+ * 55 个 skill 按类别分组成 subcommand groups（type=2），每组 ≤25 子命令：
+ * /skill <类别> <skill>（如 /skill video hyperframes）。
+ */
+export const SKILL_CATEGORY_NAMES: Record<string, string[]> = {
+  video: [
+    "hyperframes", "hyperframes-animation", "hyperframes-cli", "hyperframes-core",
+    "hyperframes-creative", "hyperframes-keyframes", "hyperframes-media", "hyperframes-registry",
+    "embedded-captions", "faceless-explainer", "general-video", "motion-graphics",
+    "music-to-video", "pr-to-video", "product-launch-video", "remotion-to-hyperframes",
+    "slideshow", "talking-head-recut", "website-to-video",
+  ],
+  dev: [
+    "brainstorming", "dispatching-parallel-agents", "executing-plans",
+    "finishing-a-development-branch", "receiving-code-review", "requesting-code-review",
+    "subagent-driven-development", "systematic-debugging", "test-driven-development",
+    "using-git-worktrees", "verification-before-completion", "writing-plans", "writing-skills",
+    "pi-subagents",
+  ],
+  fabric: [
+    "fabric-advisor", "fabric-ambient", "fabric-council", "fabric-exec", "fabric-fusion",
+    "fabric-guide", "fabric-rlm", "fabric-schema", "fabric-spec", "fabric-supervisor",
+    "fabric-swarm", "fabric-workflow",
+  ],
+  // tools：未命中名单的 skill 兜底（agently-mail/reading/github/...）
+};
+
+/** Discord 每个命令 options 上限（含 subcommand/subcommand group）。 */
+export const DISCORD_MAX_OPTIONS = 25;
+
+export interface SkillGroupSpec {
+  groupName: string;
+  subs: SkillSubcommandSpec[];
+}
+
+/** 按类别分组（每组 ≤25；未命中名单 → tools 兜底）。 */
+export function buildSkillGroups(merged: ChatCommandDefinition[]): SkillGroupSpec[] {
+  const subs = extractSkillSubcommands(merged);
+  const buckets = new Map<string, SkillSubcommandSpec[]>();
+  for (const spec of subs) {
+    let cat = "tools";
+    for (const [name, members] of Object.entries(SKILL_CATEGORY_NAMES)) {
+      if (members.includes(spec.subName)) {
+        cat = name;
+        break;
+      }
+    }
+    const list = buckets.get(cat) ?? [];
+    list.push(spec);
+    buckets.set(cat, list);
+  }
+  const ordered = [...Object.keys(SKILL_CATEGORY_NAMES), "tools"];
+  return ordered
+    .filter((name) => buckets.has(name))
+    .map((name) => ({ groupName: name, subs: (buckets.get(name) ?? []).slice(0, DISCORD_MAX_OPTIONS) }));
+}
 /** 在合并命令集中按原生名查找（本地 handler 优先）。 */
 export function findMergedCommandByNativeName(
   merged: ChatCommandDefinition[],
