@@ -46,10 +46,10 @@ export interface OpenclawBridgeConfig {
 }
 
 export interface DiscordDelivery {
-  sendMessage: (text: string) => Promise<string>;
-  editMessage: (messageId: string, text: string) => Promise<void>;
-  deleteMessage: (messageId: string) => Promise<void>;
-  sendChatAction: (action: "typing") => Promise<void>;
+  sendMessage: (chatId: string, text: string) => Promise<string>;
+  editMessage: (chatId: string, messageId: string, text: string) => Promise<void>;
+  deleteMessage: (chatId: string, messageId: string) => Promise<void>;
+  sendChatAction: (chatId: string, action: "typing") => Promise<void>;
 }
 
 /**
@@ -80,10 +80,10 @@ export class TurnManager {
     this.turnId = `${params.chatId}:${params.messageId ?? this.startedAt}`;
 
     const transport: DraftTransport = {
-      sendMessage: params.delivery.sendMessage,
-      editMessage: params.delivery.editMessage,
-      deleteMessage: params.delivery.deleteMessage,
-      sendChatAction: params.delivery.sendChatAction,
+      sendMessage: (text) => params.delivery.sendMessage(params.chatId, text),
+      editMessage: (messageId, text) => params.delivery.editMessage(params.chatId, messageId, text),
+      deleteMessage: (messageId) => params.delivery.deleteMessage(params.chatId, messageId),
+      sendChatAction: (action) => params.delivery.sendChatAction(params.chatId, action),
     };
 
     // 笔记 08: answer lane（主回答流式）
@@ -293,7 +293,7 @@ export class OpenclawBridge {
     this.clearWatchdog();
     this.turn = undefined;
     try {
-      await this.delivery.sendMessage(reason);
+      await this.delivery.sendMessage(turn.chatId, reason);
     } catch {
       // 忽略发送失败
     }

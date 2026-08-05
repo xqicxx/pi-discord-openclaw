@@ -251,9 +251,9 @@ export default function (pi: ExtensionAPI) {
   const gateway = new DiscordGateway({ token: conn.token, intents: DISCORD_INTENTS });
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
-  let activeChannelId: string | undefined;
+  const activeChannelIds = new Map<string, string>();
   // typing 节流（笔记 25 性能：10s 一次）
-  let lastTypingAtMs = 0;
+  const lastTypingAtMs = new Map<string, number>();
   // 命令执行 ctx（最近一次事件 handler 的 ExtensionContext 适配，笔记 21）
   let commandCtx: CommandExecutionCtx | undefined;
   // bot username（/cmd@bot mention 剥离用，READMEY.user）
@@ -266,28 +266,25 @@ export default function (pi: ExtensionAPI) {
   const rpc = new PiRpcBridge({ idleMs: 30_000 });
 
   const delivery: DiscordDelivery = {
-    sendMessage: async (text) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      const sent = await rest.createChannelMessage(activeChannelId, { content: text });
+    sendMessage: async (chatId, text) => {
+      const sent = await rest.createChannelMessage(chatId, { content: text });
       if (!sent.id) throw new Error(`${TAG} sendMessage: no message id`);
       return sent.id;
     },
-    editMessage: async (messageId, text) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      await rest.editChannelMessage(activeChannelId, messageId, text);
+    editMessage: async (chatId, messageId, text) => {
+      await rest.editChannelMessage(chatId, messageId, text);
     },
-    deleteMessage: async (messageId) => {
-      if (!activeChannelId) throw new Error(`${TAG} no active channelId`);
-      await rest.deleteChannelMessage(activeChannelId, messageId);
+    deleteMessage: async (chatId, messageId) => {
+      await rest.deleteChannelMessage(chatId, messageId);
     },
-    sendChatAction: async () => {
-      if (!activeChannelId) return;
+    sendChatAction: async (chatId) => {
       // 笔记 25 性能：typing 节流 10s（Discord 官方建议间隔；每次 flush 都发会触发
       // typing 限流 5/10s → 429，且白白占用请求预算）
       const now = Date.now();
-      if (now - lastTypingAtMs < 10_000) return;
-      lastTypingAtMs = now;
-      await rest.sendChannelTyping(activeChannelId).catch(() => {});
+      const last = lastTypingAtMs.get(chatId) ?? 0;
+      if (now - last < 10_000) return;
+      lastTypingAtMs.set(chatId, now);
+      await rest.sendChannelTyping(chatId).catch(() => {});
     },
   };
 
@@ -509,7 +506,7 @@ export default function (pi: ExtensionAPI) {
     if (conn.ignoreBots !== false && author?.bot) return;
     if (!content) return;
     if (conn.channels?.length && !conn.channels.includes(channelId)) return;
-    activeChannelId = channelId;
+    activeChannelIds.set(channelId, channelId);
 
     // 笔记 20/21：文本命令拦截（/stop /help 等本地执行，不进 agent）
     const resolved = resolveTextCommand(content, { botUsername });
@@ -624,7 +621,7 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
-    bridge.beginTurn({ chatId: activeChannelId ?? "default" });
+    bridge.beginTurn({ chatId: activeChannelIds.get(ctx.chatId ?? "default") ?? "default" });
     void statusReactions?.setThinking();
   });
   pi.on("message_update", (event, ctx) => {
