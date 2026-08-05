@@ -104,8 +104,15 @@ async function reviewPR(prNumber) {
     const verdict = labels.includes(TAGS.approve) ? 'approved' : 'needs-work';
     setState(`pr:${prNumber}`, { ...st, stage: 'review-done', verdict });
     if (verdict === 'needs-work') {
-      // 触发迭代
-      enqueue(() => withLock(() => iterateNeedsWorkPR(prNumber)));
+      // 触发迭代，但仅在未达到上限时
+      const round = st.iterRound || 0;
+      if (round < MAX_ITER_ROUNDS) {
+        enqueue(() => withLock(() => iterateNeedsWorkPR(prNumber)));
+      } else {
+        // 已达上限，标记 done，不再迭代
+        setState(`pr:${prNumber}`, { ...st, stage: 'done', iterRound: round });
+        console.log(`[review] PR #${prNumber} max rounds reached, done`);
+      }
     }
     return;
   }
