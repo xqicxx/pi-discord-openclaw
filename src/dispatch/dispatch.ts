@@ -41,7 +41,7 @@ export interface OpenclawBridgeConfig {
   formatAnswerText?: (text: string) => string;
   /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），超时 abort 当前 turn。 */
   turnWatchdogMs?: number;
-  /** 笔记 28：工具超时连续次数阈值，超过则强制 abort turn（防模型重试循环）。 */
+  /** 连续工具超时阈值（默认 3 次），超过则强制 abort turn。 */
   maxToolTimeouts?: number;
 }
 
@@ -153,6 +153,9 @@ export class TurnManager {
       case "tool-end":
         this.progress.onToolEnd({ id: event.id, ok: event.ok });
         return true;
+      case "tool-timeout":
+        // 工具超时事件：由桥层处理连续超时检测
+        return true;
       default:
         return false;
     }
@@ -174,7 +177,8 @@ export type OpenclawActivityEvent =
   | { type: "assistant-text-delta"; delta: string }
   | { type: "tool-start"; id?: string; name?: string; args?: Record<string, unknown> }
   | { type: "tool-update"; id?: string; detail?: string }
-  | { type: "tool-end"; id?: string; ok?: boolean };
+  | { type: "tool-end"; id?: string; ok?: boolean }
+  | { type: "tool-timeout"; id?: string; name?: string };
 
 /**
  * OpenclawBridge：Discord 桥接整合层。
@@ -182,7 +186,7 @@ export type OpenclawActivityEvent =
  * - 提供连续输入 debounce
  * - 复用 lane 实现（解耦）
  * - 笔记 27：turn 级 watchdog——连续无活动超时 abort
- * - 笔记 28：工具超时连续次数检测——超过阈值强制 abort（防模型重试循环）
+ * - 连续工具超时检测：超过阈值强制 abort turn
  */
 export class OpenclawBridge {
   private config: OpenclawBridgeConfig;
@@ -242,6 +246,9 @@ export class OpenclawBridge {
 
   /** 事件路由到当前 turn（无 turn 时忽略）。 */
   handleActivity(event: OpenclawActivityEvent): boolean {
+    if (event.type === "tool-timeout") {
+      return this.onToolTimeout(event);
+    }
     const consumed = this.turn?.handleActivity(event) ?? false;
     if (consumed) {
       this.lastActivityAt = Date.now();
@@ -279,15 +286,6 @@ export class OpenclawBridge {
     }
   }
 
-  /** 笔记 28：工具超时检测——连续超时超过阈值则强制 abort。 */
-  onToolTimeout(): void {
-    this.consecutiveToolTimeouts += 1;
-    const max = this.config.maxToolTimeouts ?? 3;
-    if (this.consecutiveToolTimeouts >= max && this.turn && !this.turn.isSuperseded()) {
-      void this.abortTurn(`工具连续超时 ${this.consecutiveToolTimeouts} 次，已中止当前任务（请换用短轮询或减少等待时间）`);
-    }
-  }
-
   /** 笔记 27：abort 当前 turn——清理状态 + 回复提示。 */
   private async abortTurn(reason: string): Promise<void> {
     const turn = this.turn;
@@ -305,5 +303,21 @@ export class OpenclawBridge {
     } catch {
       // 忽略清理失败
     }
+  }
+
+  /** 连续工具超时检测：超过阈值强制 abort turn。 */
+  private onToolTimeout(event: Extract<OpenclawActivityEvent, { type: "tool-timeout" }>): boolean {
+    if (!this.turn || this.turn.isSuperseded()) return false;
+    this.consecutiveToolTimeouts++;
+    const max = this.config.maxToolTimeouts ?? 3;
+    if (this.consecutiveToolTimeouts >= max) {
+      const toolName = event.name ? `（${event.name}）` : "";
+      void this.abortTurn(`工具连续超时 ${max} 次${toolName}，已中止任务，请重试或简化请求。`);
+      return true;
+    }
+    // 未达阈值，重置 watchdog 并继续
+    this.lastActivityAt = Date.now();
+    this.startWatchdog();
+    return true;
   }
 }
