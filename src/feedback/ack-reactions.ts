@@ -195,14 +195,12 @@ export function createStatusReactionController(params: StatusReactionControllerO
   async function applyEmoji(newEmoji: string): Promise<void> {
     if (!enabled) return;
     try {
-      // 笔记 30：单表情替换式——消息上始终只显示当前状态（⏳→👀→🧠→🛠️→✅），
-      // 切换时先移除旧表情，避免叠加/残留（「没思考却挂着思考标签」）。
-      if (activeEmojis.has(newEmoji) && activeEmojis.size === 1) {
-        currentEmoji = newEmoji;
-        return; // 已是当前唯一表情，无需操作
+      // 笔记 30：只增不减（openclaw 原版语义）——⏳👀🧠 叠加演进是正常的
+      //（每步都真实发生，有意义的）；终态 ✅/❌ 时 removeActiveEmojis 全部清理，
+      // 不残留无意义标签。双通道 bug（裸加 👀）已修复，状态单通道管理。
+      if (!activeEmojis.has(newEmoji)) {
+        await adapter.setReaction(newEmoji);
       }
-      await removeActiveEmojis();
-      await adapter.setReaction(newEmoji);
       activeEmojis.add(newEmoji);
       currentEmoji = newEmoji;
     } catch (err) {

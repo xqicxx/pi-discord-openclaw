@@ -31,7 +31,6 @@ import { DiscordRest } from "./src/transport/discord-rest.ts";
 import {
   createDiscordReactionAdapter,
   createStatusReactionController,
-  queueInitialAckReaction,
   STATUS_TIMING,
   type StatusReactionController,
 } from "./src/feedback/ack-reactions.ts";
@@ -647,7 +646,9 @@ export default function (pi: ExtensionAPI) {
     }
 
     // 普通消息：ack + 提交 pi
-    // 笔记 23：收到消息立即 setQueued（👀 走 controller，与 openclaw 一致）
+    // 笔记 30：只走 statusReactions 状态机（⏳=收到/排队）——
+    // 删掉 queueInitialAckReaction（裸加 👀 不经状态机：清不掉 + reaction 操作翻倍触发限流，
+    // 导致后续 🧠/🛠️ 全部失败——「思考时没标签」根因）。
     const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
     statusReactions = createStatusReactionController({
       adapter,
@@ -656,7 +657,6 @@ export default function (pi: ExtensionAPI) {
       timing: cfg.statusReactions?.timing,
     });
     void statusReactions.setQueued();
-    void queueInitialAckReaction({ adapter });
     bridge.pushUserMessage(content, channelId);
   });
 
