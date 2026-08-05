@@ -15,7 +15,7 @@ const DEFAULT_THROTTLE_MS = 1000;
 const MIN_THROTTLE_MS = 250;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const MAX_PREVIEW_FLOOD_SUSPEND_MS = 60_000;
-const MIN_PREVIEW_DWELL_MS = 4_000;
+const MIN_PREVIEW_DWELL_MS = 1_500; // 笔记 30：回答定型后 1.5s 内收起进度方块，减少思考/输出并存的一团感
 const DEFAULT_CHUNK_SIZE = 1900; // Discord 2000 上限留余量
 
 export interface DraftStreamOptions {
@@ -31,6 +31,8 @@ export interface DraftStreamOptions {
   previewThrottleMs?: number;
   /** Telegram transport: send/edit/delete/chatAction. Injected by the bridge. */
   transport?: DraftTransport;
+  /** 笔记 30：投递失败超过重试上限时回调（宿主可通知用户，避免静默丢消息）。 */
+  onDeliveryFailed?: (error: unknown, context: string) => void;
   /**
    * 最终投递前格式化钩子（笔记 24：convertMarkdownTables + stripInlineDirectiveTags）。
    * 仅对 answer lane 传入；progress 草稿不格式化（进度行是纯文本）。
@@ -41,7 +43,8 @@ export interface DraftStreamOptions {
 
 export interface DraftTransport {
   sendMessage: (text: string) => Promise<string>;
-  editMessage: (messageId: string, text: string) => Promise<void>;
+  /** issue 59：编辑时透传 embeds（不传则保持原样；传 undefined 清空）。 */
+  editMessage: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   sendChatAction: (action: "typing") => Promise<void>;
 }
@@ -101,6 +104,7 @@ export class DraftStream {
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
   private formatText?: (text: string) => string | { content: string; embeds?: unknown[] };
+  private onDeliveryFailed?: (error: unknown, context: string) => void;
   /** 笔记 25 性能：preview 编辑节流窗口。 */
   private previewThrottleMs: number;
   private previewLastSentAtMs = 0;
@@ -111,6 +115,7 @@ export class DraftStream {
     this.chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
     this.minInitialChars = options.minInitialChars ?? 0;
     this.formatText = options.formatText;
+    this.onDeliveryFailed = options.onDeliveryFailed;
     this.previewThrottleMs = Math.max(0, options.previewThrottleMs ?? 1000);
     this.transport = options.transport ?? {
       sendMessage: async () => "",
@@ -309,6 +314,12 @@ export class DraftStream {
           `[draft-stream] 投递失败 ${MAX_CONSECUTIVE_FAILURES} 次后放弃（streamMessageId=${this.streamMessageId ?? "new"}）: `,
           err instanceof Error ? err.message : String(err),
         );
+        // 笔记 30：不再静默——通知宿主（发到 discord 频道）
+        try {
+          this.onDeliveryFailed?.(err, "reply delivery");
+        } catch {
+          // 忽略通知自身失败
+        }
       }
       if (this.failures <= MAX_CONSECUTIVE_FAILURES) {
         // Issue #1 修复：重试保留完整累积。恢复未投递增量 =
@@ -344,6 +355,12 @@ export class DraftStream {
   /** Final flush + mark stopped. */
   async stop(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
+    // 笔记 30：防截断竞态——若上一次 flush 仍在飞行（editMessage 未返回），
+    // 直接 flush 会因 flushing 防重入而返回，完整内容丢失（消息停在中间态）。
+    // 等待飞行结束，再发最终内容。
+    while (this.flushing) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     // 先发送 pending 文本，再标记 stopped（否则 flush() 会因 stopped 直接返回，最终回复丢失）
     await this.flush();
     this.stopped = true;

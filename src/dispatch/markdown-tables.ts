@@ -87,7 +87,10 @@ function renderAsciiTable(block: TableBlock): string {
  *   | --- | --- |
  *   | 1   | 2   |
  */
-export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "code"): string {
+export function convertMarkdownTables(
+  markdown: string,
+  mode: "code" | "bullets" | "off" = "code",
+): string {
   if (!markdown || mode === "off") return markdown;
   const lines = markdown.split("\n");
   const out: string[] = [];
@@ -96,7 +99,9 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   while (i < lines.length) {
     const block = parseTableBlock(lines, i);
     if (block) {
-      out.push("```", renderAsciiTable(block), "```");
+      // 笔记 30：bullets 模式（openclaw renderTableAsBullets）——
+      // 第一列=行标签（加粗），其余列=子弹列表，位置正确且不生硬
+      out.push(mode === "bullets" ? renderBulletsTable(block) : "```" + "\n" + renderAsciiTable(block) + "\n" + "```");
       convertedAny = true;
       i += 2 + block.rows.length;
     } else {
@@ -136,6 +141,91 @@ export function convertMarkdownTableToEmbed(markdown: string): { embeds: unknown
     i += 1;
   }
   return null;
+}
+
+/** 笔记 30：表格 → 子弹列表（openclaw renderTableAsBullets 语义）。
+ *  多列：第一列=行标签（加粗），其余列 • 列名: 值；单列：全部 • 列名: 值。 */
+function renderBulletsTable(block: TableBlock): string {
+  const headers = block.headers.map((h) => h.trim());
+  const rows = block.rows.map((r) => r.map((c) => c.trim()));
+  if (headers.length === 0 && rows.length === 0) return "";
+  const lines: string[] = [];
+  const useLabel = headers.length > 1 && rows.length > 0;
+  if (useLabel) {
+    for (const row of rows) {
+      if (row.length === 0) continue;
+      const label = row[0];
+      if (label) lines.push("**" + label + "**");
+      for (let i = 1; i < row.length; i++) {
+        const value = row[i];
+        if (!value) continue;
+        const header = headers[i];
+        lines.push("• " + (header ? header + ": " : "") + value);
+      }
+      lines.push("");
+    }
+  } else {
+    for (const row of rows) {
+      for (let i = 0; i < row.length; i++) {
+        const value = row[i];
+        if (!value) continue;
+        const header = headers[i];
+        lines.push("• " + (header ? header + ": " : "") + value);
+      }
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trimEnd();
+}
+
+/**
+ * 文本中的 markdown 表格全部转为 Discord Embed fields（issue 59）。
+ * - 非表格内容保留在 content（Discord 原生渲染 markdown）
+ * - 每个表格块 → 一个 embed（title=表格，description=表头，fields=每行一字段）
+ * - 超出 Discord 限制（>10 embeds / 单表 >25 fields / 单格 >1024 字符 /
+ *   合计 >6000 字符）→ 返回 null，调用方回退 ASCII 代码块
+ */
+export function convertTextWithTables(
+  markdown: string,
+): { content: string; embeds: unknown[] } | null {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  const embeds: unknown[] = [];
+  let i = 0;
+  let totalEmbedChars = 0;
+  // 笔记 30：Discord 的 embed 只能渲染在 content 下方——
+  // 若表格之后还有内容，embed 会把表格挤到最后（位置错乱）。
+  // 此时回退 ASCII 代码块（保位置优先）。
+  let sawTable = false;
+  while (i < lines.length) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+      for (const row of block.rows) {
+        if (row.length === 0) continue;
+        const name = row[0] ?? "";
+        const value = row.slice(1).join(" | ") || "—";
+        if (name.length > 256 || value.length > 1024) return null;
+        fields.push({ name, value, inline: true });
+      }
+      if (fields.length === 0 || fields.length > 25) return null;
+      const description = block.headers.join(" | ").slice(0, 4096);
+      const embed = { title: "表格", description, fields };
+      const chars = JSON.stringify(embed).length;
+      if (totalEmbedChars + chars > 5800) return null; // 6000 留余量
+      totalEmbedChars += chars;
+      embeds.push(embed);
+      sawTable = true;
+      i += 2 + block.rows.length;
+    } else {
+      // 笔记 30：表格之后还有非空内容 → 回退（embed 位置会错乱）
+      if (sawTable && lines[i].trim() !== "") return null;
+      out.push(lines[i]);
+      i += 1;
+    }
+  }
+  if (embeds.length === 0 || embeds.length > 10) return null;
+  return { content: out.join("\n").trim(), embeds };
 }
 
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----

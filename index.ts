@@ -37,6 +37,7 @@ import {
 } from "./src/feedback/ack-reactions.ts";
 import {
   convertMarkdownTables,
+  convertTextWithTables,
   stripInlineDirectiveTagsForDelivery,
 } from "./src/dispatch/markdown-tables.ts";
 import { DiscordGateway } from "./src/transport/discord-gateway.ts";
@@ -301,14 +302,33 @@ export default function (pi: ExtensionAPI) {
   // RPC 只读桥（/export 等；懒启动，笔记 22）
   const rpc = new PiRpcBridge({ idleMs: 30_000 });
 
+  // 笔记 30：错误通知——关键错误发到 discord 频道（不再静默）。
+  // 限频：30s 窗口内最多 1 条，避免错误风暴刷屏。
+  let lastErrorNoticeAt = 0;
+  function notifyError(title: string, error: unknown): void {
+    const now = Date.now();
+    if (now - lastErrorNoticeAt < 30_000) return;
+    lastErrorNoticeAt = now;
+    const chatId = lastActiveChannelId;
+    if (!chatId) return;
+    const detail =
+      error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+    void rest
+      .createChannelMessage(chatId, {
+        content: `⚠️ **pi-discord 错误 · ${title}**\n\`${String(detail).slice(0, 400)}\``,
+      })
+      .catch(() => {});
+  }
+
   const delivery: DiscordDelivery = {
     sendMessage: async (chatId, text) => {
       const sent = await rest.createChannelMessage(chatId, { content: text });
       if (!sent.id) throw new Error(`${TAG} sendMessage: no message id`);
       return sent.id;
     },
-    editMessage: async (chatId, messageId, text) => {
-      await rest.editChannelMessage(chatId, messageId, text);
+    editMessage: async (chatId, messageId, text, embeds) => {
+      // issue 59：透传 embeds，否则流式编辑 PATCH 会清掉已发送的 Embed 表格
+      await rest.editChannelMessage(chatId, messageId, text, embeds);
     },
     deleteMessage: async (chatId, messageId) => {
       await rest.deleteChannelMessage(chatId, messageId);
@@ -334,10 +354,29 @@ export default function (pi: ExtensionAPI) {
       toolProgressEnabled: cfg.toolProgress.enabled,
       debounceMs: cfg.inbound.debounceMs,
       toolProgressLines: cfg.streaming.toolProgress,
+      // 笔记 30：思考/输出强区分——receiptSummary 把方块折叠成小字摘要，
+      // maxLineChars 收敛思考行长度（openclaw progress.maxLineChars）
+      receiptSummary: cfg.streaming.receiptSummary,
+      maxLineChars: cfg.streaming.maxLineChars,
+      maxProgressLines: cfg.toolProgress.maxLines,
+      // 笔记 30：投递失败发到 discord（不再静默丢消息）
+      onDeliveryFailed: (error, context) => notifyError(`投递失败（${context}）`, error),
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
       // 笔记 26：区分靠 openclaw 折叠摘要（progress 方块变 -# 小字摘要），回答不加分隔线
-      formatAnswerText: (text) =>
-        convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code"),
+      // issue 59：tableMode="embed" 时文本中的表格全部 → Discord Embed fields，
+      // 非表格内容保留在 content；超出 Embed 限制自动回退 ASCII 代码块（不丢内容）
+      formatAnswerText: (text) => {
+        const stripped = stripInlineDirectiveTagsForDelivery(text).text;
+        const mode = cfg.tableMode ?? "code";
+        if (mode === "embed") {
+          const converted = convertTextWithTables(stripped);
+          if (converted) return { content: converted.content, embeds: converted.embeds };
+          // 笔记 30：表格在中间等不适合 embed 的场景（embed 只能在 content 下方）——
+          // 回退 bullets（第一列加粗 + 子弹列表），位置正确且不生硬（openclaw 语义）
+          return convertMarkdownTables(stripped, "bullets");
+        }
+        return convertMarkdownTables(stripped, mode === "off" ? "off" : "code");
+      },
     },
   });
 
@@ -347,6 +386,7 @@ export default function (pi: ExtensionAPI) {
   async function replyTextCommand(channelId: string, content: string): Promise<void> {
     await rest.createChannelMessage(channelId, { content }).catch((error) => {
       console.error(`${TAG} text command reply failed:`, error?.message ?? error);
+      notifyError("命令回复发送失败", error);
     });
   }
 
@@ -524,6 +564,7 @@ export default function (pi: ExtensionAPI) {
     } catch (err) {
       // 修复：executeCommand 抛异常也要响应（Discord 3s 超时前），否则显示「应用无响应」
       console.error(`${TAG} slash 命令 /${name} 执行异常：`, err instanceof Error ? err.message : String(err));
+      notifyError(`slash 命令 /${name} 执行异常`, err);
       await respondInteraction(
         interaction,
         `❌ 命令 /${name} 执行异常：${err instanceof Error ? err.message : String(err)}`,
@@ -625,10 +666,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   bridge.onUserInput = async (text) => {
-    // 笔记 29：用 steer 替代 followUp——新消息在当前工具调用结束后立即处理，
-    // 不再排队等旧任务全部完成（旧任务卡住时 bot 不再「没动静」）
+    // 笔记 29/30：新消息经桥排队后提交给 agent（steer 在当前工具调用后立即处理）
     pi.sendUserMessage(text, { deliverAs: "steer" });
   };
+  // 笔记 30：排队用表情表达（⏳=排队中），不再发文字提示——
+  // 收到消息即 ⏳，agent_start 变 👀（处理中），thinking 变 🧠。
   // 笔记 28：watchdog/触发词中断时真正停止 pi agent（否则任务还在后台跑）
   bridge.onAbort = () => {
     try {
@@ -693,10 +735,15 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
-    void statusReactions?.setThinking();
+    // 笔记 30：处理中 👀（与排队 ⏳ 区分）
+    void statusReactions?.setWorking();
   });
   pi.on("message_update", (event, ctx) => {
     captureCtx(ctx);
+    // 笔记 30：开始思考 → 🧠（覆盖处理中 👀）
+    if (event.assistantMessageEvent.type === "thinking_delta") {
+      void statusReactions?.setThinking();
+    }
     const adapted = adaptPiAssistantEvent(event.assistantMessageEvent);
     if (adapted) bridge.handleActivity(adapted);
   });
@@ -998,6 +1045,7 @@ export default function (pi: ExtensionAPI) {
   });
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
+    notifyError("Discord Gateway 断连", `code=${code}，检查 token/intents/权限`);
     // 笔记 23：错误 → ❌（终态 hold 后 clear）
     void (async () => {
       await statusReactions?.setError();
