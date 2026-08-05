@@ -1,7 +1,7 @@
 // Discord 输出格式化 — 原生移植 openclaw（笔记 24）。
 // 1. convertMarkdownTables：markdown 表格 → 对齐 ASCII 表格 + 代码块包裹
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
-// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（tableMode "embed"）
+// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（Issue #59）
 // 3. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
 // 4. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
 
@@ -109,51 +109,38 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   return out.join("\n");
 }
 
-// ---- Embed 表格转换（tableMode "embed"） ----
-
-/** Discord Embed field 结构（最小面）。 */
-export interface DiscordEmbedField {
-  name: string;
-  value: string;
-  inline?: boolean;
-}
-
-/** Discord Embed 结构（最小面）。 */
-export interface DiscordEmbed {
-  title?: string;
-  description?: string;
-  color?: number;
-  fields?: DiscordEmbedField[];
-  footer?: { text: string };
-}
+// ---- Discord Embed fields 表格转换（Issue #59） ----
 
 /**
- * markdown 表格 → Discord Embed fields（tableMode "embed"）。
- * 每行 = 1 个 field（name=第一列，value=其余列，inline 显示）。
- * 表头放 embed.title，来源/备注放 footer。
- * 返回 null 表示没有表格（调用方应回退到 code 模式）。
+ * 将 markdown 文本中的表格转换为 Discord Embed fields。
+ * 返回 { content, embeds }：content 保留非表格文本，embeds 包含每个表格的字段。
+ * 循环处理所有表格，避免只处理第一个导致内容丢失。
  */
-export function convertMarkdownTableToEmbed(markdown: string): DiscordEmbed | null {
-  if (!markdown) return null;
+export function convertMarkdownTableToEmbed(markdown: string): { content: string; embeds: unknown[] } {
+  if (!markdown) return { content: markdown, embeds: [] };
   const lines = markdown.split("\n");
+  const contentParts: string[] = [];
+  const embeds: unknown[] = [];
   let i = 0;
   while (i < lines.length) {
     const block = parseTableBlock(lines, i);
     if (block) {
-      const fields: DiscordEmbedField[] = [];
+      // 将表格转换为 embed fields
+      const fields = [];
+      // 表头作为字段名，每行数据作为字段值（简化：每行一个字段，名称为第一列，值为其余列）
       for (const row of block.rows) {
         const name = row[0] ?? "";
         const value = row.slice(1).join(" | ") || "—";
-        fields.push({ name: name.slice(0, 256), value: value.slice(0, 1024), inline: true });
+        fields.push({ name, value, inline: true });
       }
-      return {
-        title: block.headers.join(" | ").slice(0, 256),
-        fields: fields.slice(0, 25),
-      };
+      embeds.push({ fields });
+      i += 2 + block.rows.length;
+    } else {
+      contentParts.push(lines[i]);
+      i += 1;
     }
-    i += 1;
   }
-  return null;
+  return { content: contentParts.join("\n"), embeds };
 }
 
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----

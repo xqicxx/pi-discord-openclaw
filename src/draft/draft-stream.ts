@@ -34,8 +34,9 @@ export interface DraftStreamOptions {
   /**
    * 最终投递前格式化钩子（笔记 24：convertMarkdownTables + stripInlineDirectiveTags）。
    * 仅对 answer lane 传入；progress 草稿不格式化（进度行是纯文本）。
+   * 支持返回 {content, embeds} 以使用 Discord Embed fields 模拟表格（Issue #59）。
    */
-  formatText?: (text: string) => string;
+  formatText?: (text: string) => string | { content: string; embeds?: unknown[] };
 }
 
 export interface DraftTransport {
@@ -99,7 +100,7 @@ export class DraftStream {
   private previewText = "";
   private previewVisibleAtMs: number | undefined;
   private suspendedUntilMs = 0;
-  private formatText?: (text: string) => string;
+  private formatText?: (text: string) => string | { content: string; embeds?: unknown[] };
   /** 笔记 25 性能：preview 编辑节流窗口。 */
   private previewThrottleMs: number;
   private previewLastSentAtMs = 0;
@@ -240,8 +241,11 @@ export class DraftStream {
     this.inFlightText = rawText;
     try {
       // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
-      const text = this.formatText ? this.formatText(rawText) : rawText;
-      const chunks = chunkDiscordText(text, this.chunkSize);
+      // Issue #59: 支持返回 {content, embeds} 以使用 Discord Embed fields 模拟表格
+      const formatted = this.formatText ? this.formatText(rawText) : rawText;
+      const content = typeof formatted === "string" ? formatted : formatted.content;
+      const embeds = typeof formatted === "string" ? undefined : formatted.embeds;
+      const chunks = chunkDiscordText(content, this.chunkSize);
       if (this.streamMessageId === undefined) {
         this.streamMessageId = await this.transport.sendMessage(chunks[0] ?? "");
         this.deliveredChunkCount = 1;
