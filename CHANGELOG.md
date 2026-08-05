@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10: /skill:xxx 进 Discord（guild 级注册，笔记 25 续）
+
+- `Guild Skill Registration`: 新增 filterGuildRegisterableCommands + registerGuildApplicationCommands + listMyGuilds——skills 注册到 guild（独立 100/guild 额度，全局 100 上限之外），全局 88 命令不变。ready 时对 bot 所在每个 guild PUT skill 命令（55 个 /skill-xxx，超限截断 100）。交互执行路径（0.1.7 的 executeDynamicSourceCommand + 先响应）已就绪，点 /skill-xxx 即读 SKILL.md 发给 agent。
+- `Tests`: pi-commands.test 新增 guild 集用例（只含 skills、skill:xxx→skill-xxx、全局集不受影响、超限截断）。Impact: 全量测试 15 文件全绿，typecheck 通过。
+
 ## 0.1.9: 性能优化（笔记 25 续）
 
 - `Preview Throttle`: DraftStream 新增 previewThrottleMs（默认 1000ms）——thinking_delta 毫秒级到达时，窗口内合并为最新值、窗口后编辑一次（首条立即发）。Discord 消息操作限流 ~1/s/channel，无节流时 thinking 高频 edit 触发 429 风暴（重试 → 卡顿 → 暂停）。Impact: 思考方块 1s 一跳稳定流动，REST 调用量降一个数量级。

@@ -159,6 +159,16 @@ export function filterDiscordRegisterableCommands(
   return merged.filter((command) => command.source !== "skill").slice(0, 100);
 }
 
+/**
+ * 过滤 guild 注册集（笔记 25 续：/skill:xxx 进 Discord）：
+ * 提取全部 skill 命令注册到 guild（独立 100/guild 额度，全局 88 不动），
+ * 保底截断 100。交互执行路径（executeDynamicSourceCommand）已就绪。
+ */
+export function filterGuildRegisterableCommands(
+  merged: ChatCommandDefinition[],
+): ChatCommandDefinition[] {
+  return merged.filter((command) => command.source === "skill").slice(0, 100);
+}
 /** 在合并命令集中按原生名查找（本地 handler 优先）。 */
 export function findMergedCommandByNativeName(
   merged: ChatCommandDefinition[],

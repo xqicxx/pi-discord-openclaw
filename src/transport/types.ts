@@ -28,6 +28,12 @@ export interface DiscordCreatedMessage {
   id?: Snowflake;
 }
 
+/** Bot 所在服务器（GET /users/@me/guilds 最小面）。 */
+export interface DiscordGuildSummary {
+  id: Snowflake;
+  name?: string;
+}
+
 // ---- Gateway ----
 
 /** Gateway opcode（discord-api-types GatewayOpcodes 子集）。 */

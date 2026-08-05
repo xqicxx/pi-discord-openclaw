@@ -1,6 +1,6 @@
 // Discord REST client — ported from openclaw extensions/discord src/internal/rest.ts (笔记 10).
 // 零依赖：node 22 原生 fetch。核心：Bot header、v10 API、429 retry-after 解析、超时。
-import type { DiscordApplicationCommand, DiscordCreatedMessage, Snowflake } from "./types.ts";
+import type { DiscordApplicationCommand, DiscordCreatedMessage, DiscordGuildSummary, Snowflake } from "./types.ts";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -158,6 +158,26 @@ export class DiscordRest {
     commands: Array<{ name: string; description: string; options?: unknown[] }>,
   ): Promise<DiscordApplicationCommand[]> {
     return this.request<DiscordApplicationCommand[]>("PUT", `/applications/${applicationId}/commands`, commands);
+  }
+  /**
+   * PUT /applications/{id}/guilds/{gid}/commands — guild 级注册（笔记 25 续：
+   * skills 走 guild 额度，全局 100 上限之外独立 100/guild，绕过全局超限）。
+   */
+  async registerGuildApplicationCommands(
+    applicationId: Snowflake,
+    guildId: Snowflake,
+    commands: Array<{ name: string; description: string; options?: unknown[] }>,
+  ): Promise<DiscordApplicationCommand[]> {
+    return this.request<DiscordApplicationCommand[]>(
+      "PUT",
+      `/applications/${applicationId}/guilds/${guildId}/commands`,
+      commands,
+    );
+  }
+
+  /** GET /users/@me/guilds — bot 所在服务器列表（guild 命令注册目标）。 */
+  async listMyGuilds(): Promise<DiscordGuildSummary[]> {
+    return this.request<DiscordGuildSummary[]>("GET", "/users/@me/guilds");
   }
 
   /** POST /interactions/{id}/{token}/callback — interaction 首次响应（204 无 body）。 */

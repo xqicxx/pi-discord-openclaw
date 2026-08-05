@@ -3,6 +3,7 @@ import {
   loadPiBuiltinCommands,
   collectPiRuntimeCommands,
   filterDiscordRegisterableCommands,
+  filterGuildRegisterableCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
   sanitizeDiscordCommandName,
@@ -112,6 +113,33 @@ function assert(cond, label) {
   const capped = filterDiscordRegisterableCommands(many);
   assert(capped.length === 100, `超限截断到 100（实际 ${capped.length}）`);
   assert(capped.some((c) => c.key === 'models'), '截断后本地命令保留');
+}
+
+// 7. guild 注册集（笔记 25 续）：skills 走 guild 额度，/skill:xxx 进 Discord
+{
+  const fakePi = {
+    getCommands: () => [
+      { name: 'my-tool', description: 'A custom tool', source: 'extension', sourceInfo: {} },
+      { name: 'skill:foo', description: 'Skill foo', source: 'skill', sourceInfo: {} },
+      { name: 'skill:bar', description: 'Skill bar', source: 'skill', sourceInfo: {} },
+    ],
+  };
+  const merged = mergeCommandSets(buildBuiltinCommands(), collectPiRuntimeCommands(fakePi));
+  const guild = filterGuildRegisterableCommands(merged);
+  const names = new Set(guild.map((c) => c.nativeName));
+  assert(guild.length === 2, `guild 集只含 skills（实际 ${guild.length}）`);
+  assert(names.has('skill-foo') && names.has('skill-bar'), 'skill:xxx → skill-xxx 进 guild 集');
+  assert(!names.has('my-tool'), '非 skill 不进 guild 集');
+  // 全局集不受影响（无 skill）
+  const global = filterDiscordRegisterableCommands(merged);
+  assert(!global.some((c) => c.source === 'skill'), '全局集仍排除 skill');
+
+  // 超 100 截断
+  const manySkills = Array.from({ length: 120 }, (_, i) => ({
+    key: 'skill:' + i, nativeName: 'skill-' + i, description: 'x', textAliases: [], scope: 'native',
+    source: 'skill',
+  }));
+  assert(filterGuildRegisterableCommands(manySkills).length === 100, 'guild 集超限截断 100');
 }
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 if (fail > 0) process.exit(1);

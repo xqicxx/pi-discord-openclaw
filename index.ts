@@ -53,6 +53,7 @@ import {
 import {
   collectPiRuntimeCommands,
   filterDiscordRegisterableCommands,
+  filterGuildRegisterableCommands,
   loadPiBuiltinCommands,
   mergeCommandSets,
   findMergedCommandByNativeName,
@@ -709,6 +710,36 @@ export default function (pi: ExtensionAPI) {
             error instanceof Error ? error.message : String(error),
             detail ? `${detail}` : "",
           );
+        }
+
+        // 笔记 25 续：/skill:xxx 进 Discord —— guild 级注册（独立 100/guild 额度，
+        // 全局 100 上限已满；交互执行路径 executeDynamicSourceCommand 已就绪）
+        const guildSkills = filterGuildRegisterableCommands(merged);
+        if (guildSkills.length > 0) {
+          const guildCommands = guildSkills.map((command) => ({
+            name: command.nativeName as string,
+            description: truncateDiscordCommandDescription(command.description),
+            options: buildDiscordCommandOptions(command),
+          }));
+          try {
+            const guilds = await rest.listMyGuilds();
+            for (const guild of guilds) {
+              await rest.registerGuildApplicationCommands(applicationId, guild.id, guildCommands);
+              console.log(
+                `${TAG} 已注册 ${guildCommands.length} 个 skill 命令到 guild ${guild.name ?? guild.id}`,
+              );
+            }
+          } catch (error) {
+            const detail =
+              error instanceof Error && "body" in error
+                ? JSON.stringify((error as { body?: unknown }).body)
+                : undefined;
+            console.error(
+              `${TAG} guild skill 命令注册失败：`,
+              error instanceof Error ? error.message : String(error),
+              detail ? `${detail}` : "",
+            );
+          }
         }
       })();
     }
