@@ -2,3 +2,9 @@ node_modules/
 *.log
 .tmp/
 .worktrees/
+
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json

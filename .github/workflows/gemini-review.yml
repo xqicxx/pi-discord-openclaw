@@ -1,106 +1,122 @@
-name: Gemini PR Review
+name: '🔎 Gemini Review'
 
 on:
-  # 仅手动触发（workflow_dispatch）：按需 review，不自动跑，节省 GitHub Actions
-  # 免费额度（private 仓库 2000 分钟/月）。用法：
-  #   gh workflow run "Gemini PR Review" -f pr_number=<PR号>
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      pr_number:
-        description: 'PR number to review (leave empty = latest open PR)'
+      additional_context:
+        type: 'string'
+        description: 'Any additional context from the request'
         required: false
-        type: string
 
-permissions:
-  contents: read
-  pull-requests: write
+concurrency:
+  group: '${{ github.workflow }}-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}'
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
 
 jobs:
-  gemini-review:
-    runs-on: ubuntu-latest
+  review:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 7
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      issues: 'write'
+      pull-requests: 'write'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: 'Mint identity token'
+        id: 'mint_identity_token'
+        if: |-
+          ${{ vars.APP_ID }}
+        uses: 'actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf' # ratchet:actions/create-github-app-token@v2
+        with:
+          app-id: '${{ vars.APP_ID }}'
+          private-key: '${{ secrets.APP_PRIVATE_KEY }}'
+          permission-contents: 'read'
+          permission-issues: 'write'
+          permission-pull-requests: 'write'
 
-      - name: Resolve PR number
-        id: pr
-        run: |
-          if [ -n "${{ github.event.inputs.pr_number }}" ]; then
-            echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
-          else
-            PR=$(gh pr list --repo "${{ github.repository }}" --state open --limit 1 --json number -q '.[0].number' 2>/dev/null || echo '')
-            echo "number=$PR" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Resolved PR: ${{ steps.pr.outputs.number }}"
+      - name: 'Checkout repository'
+        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        with:
+          persist-credentials: 'false'
 
-      - name: Fetch diff
-        id: diff
+      - name: 'Prepare prompt context'
+        shell: 'bash'
+        run: |-
+          mkdir -p .gemini
+          jq -n \
+            --arg repo "${REPOSITORY}" \
+            --arg pr "${PULL_REQUEST_NUMBER}" \
+            --arg context "${ADDITIONAL_CONTEXT}" \
+            '{repository: $repo, pull_request_number: $pr, additional_context: $context}' > .gemini/context.json
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr diff ${{ steps.pr.outputs.number }} > /tmp/pr.diff || exit 1
-          wc -l /tmp/pr.diff
-          echo "size=$(wc -c < /tmp/pr.diff)" >> "$GITHUB_OUTPUT"
+          REPOSITORY: '${{ github.repository }}'
+          PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
+          ADDITIONAL_CONTEXT: '${{ inputs.additional_context }}'
 
-      - name: Gemini code review
-        id: review
+      - name: 'Run Gemini pull request review'
+        uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
+        id: 'gemini_pr_review'
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PYEOF'
-          import json, os, urllib.request, urllib.error
-
-          key = os.environ['GEMINI_API_KEY']
-          pr = os.environ['PR_NUMBER']
-          repo = os.environ['REPO']
-
-          diff = open('/tmp/pr.diff', encoding='utf-8', errors='replace').read()
-          if len(diff) > 80000:
-              diff = diff[:80000] + '\n... (diff truncated)'
-
-          model = 'gemini-2.5-flash'
-          prompt = (
-              'You are a senior code reviewer. Review this GitHub pull request diff '
-              '(repo: %s, PR #%s). '
-              'Focus on: correctness bugs, race conditions, edge cases, error handling, '
-              'regressions, and test coverage. Be precise and cite line numbers from the diff. '
-              'Output in Markdown with these sections: '
-              '## Summary (2-3 sentences), ## Issues (list, each with severity: CRITICAL/MAJOR/MINOR), '
-              '## Suggestions, ## Verdict (APPROVE / REQUEST_CHANGES). '
-              'Write the verdict in both English and Chinese (中文). '
-              'If the diff is empty or trivial, say so and still give a verdict.\n\n'
-              '--- DIFF START ---\n%s\n--- DIFF END ---'
-          ) % (repo, pr, diff)
-
-          url = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s' % (model, key)
-          body = {
-              'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-              'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 16384},
-          }
-          req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
-          try:
-              with urllib.request.urlopen(req, timeout=120) as resp:
-                  data = json.load(resp)
-              text = data['candidates'][0]['content']['parts'][0]['text']
-          except urllib.error.HTTPError as e:
-              text = 'ERROR: Gemini API failed (%s): %s' % (e.code, e.read().decode()[:300])
-
-          open('/tmp/review.md', 'w', encoding='utf-8').write(text)
-
-          import subprocess, datetime
-          header = '🤖 **Gemini Review** (model: %s)\n\n' % model
-          with open('/tmp/review.md', 'a', encoding='utf-8') as f:
-              f.write('\n---\n*Generated by GitHub Actions · %s*\n' % datetime.datetime.now().isoformat())
-          body = open('/tmp/review.md', encoding='utf-8').read()
-          # 注：GITHUB_TOKEN 不允许 approve（GraphQL 拒绝），统一用普通 PR 评论
-          subprocess.run(['gh', 'pr', 'comment', pr, '--repo', repo, '--body', header + body], check=False)
-          PYEOF
-
-      - name: Show review result
-        if: always()
-        run: |
-          echo "--- review ---"
-          head -50 /tmp/review.md 2>/dev/null || echo "(no review produced)"
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GITHUB_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+        with:
+          gcp_location: '${{ vars.GOOGLE_CLOUD_LOCATION }}'
+          gcp_project_id: '${{ vars.GOOGLE_CLOUD_PROJECT }}'
+          gcp_service_account: '${{ vars.SERVICE_ACCOUNT_EMAIL }}'
+          gcp_workload_identity_provider: '${{ vars.GCP_WIF_PROVIDER }}'
+          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
+          gemini_cli_version: '${{ vars.GEMINI_CLI_VERSION }}'
+          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
+          gemini_model: '${{ vars.GEMINI_MODEL }}'
+          google_api_key: '${{ secrets.GOOGLE_API_KEY }}'
+          use_gemini_code_assist: '${{ vars.GOOGLE_GENAI_USE_GCA }}'
+          use_vertex_ai: '${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}'
+          upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
+          workflow_name: 'gemini-review'
+          # Explicitly set the PR number to handle `issue_comment` triggers (which GitHub treats as issues, not PRs)
+          github_pr_number: '${{ github.event.pull_request.number }}'
+          settings: |-
+            {
+              "model": {
+                "maxSessionTurns": 25
+              },
+              "telemetry": {
+                "enabled": true,
+                "target": "local",
+                "outfile": ".gemini/telemetry.log"
+              },
+              "mcpServers": {
+                "github": {
+                  "command": "docker",
+                  "args": [
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e",
+                    "GITHUB_PERSONAL_ACCESS_TOKEN",
+                    "ghcr.io/github/github-mcp-server:v0.27.0"
+                  ],
+                  "includeTools": [
+                    "add_comment_to_pending_review",
+                    "pull_request_read",
+                    "pull_request_review_write"
+                  ],
+                  "env": {
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+                  }
+                }
+              },
+              "tools": {
+                "core": []
+              }
+            }
+          extensions: |
+            [
+              "https://github.com/gemini-cli-extensions/code-review"
+            ]
+          prompt: '/pr-code-review'
