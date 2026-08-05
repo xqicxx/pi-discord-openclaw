@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Recreate the OpenClaw streaming experience for the <a href="https://github.com/xqicxx/pi">Pi coding agent</a> on Discord.</strong><br/>
-  🧠 Separate italic reasoning · 🔧 Live tool progress · 📝 Typewriter-style streamed answers · ⏭️ Debounced follow-ups · ⏹️ New messages interrupt the current turn
+  🧠 Separate italic reasoning · 🔧 Live tool progress · 📝 Typewriter-style streamed answers · ⏭️ Debounced follow-ups · ⏳→👀→🧠 Status emoji state machine
 </p>
 
 <p align="center">
@@ -56,7 +56,7 @@ OpenClaw's Discord channel is the **gold standard for streaming output**: reason
 - **🔧 Tool progress** — tool-start/update/end three-state lines, `✓ 🛠️ bash: ...` / `✗ 🧩 fabric_exec`, incremental updates by id, capped line count
 - **📝 Typewriter answers** — 2000-char chunking, throttled edits, retry on failure, preview message (draft-stream)
 - **⏭️ Follow-up merging** — dual-lane debounce, message coalescing, serial flush
-- **⏹️ Message interrupt** — a new message aborts the current task and is answered first (openclaw run-now semantics)
+- **⏳→👀→🧠 Status emoji** — queueing (⏳), processing (👀), thinking (🧠), tools (🛠️), done (✅); new messages during a turn are **queued** (openclaw steer/followup semantics) instead of interrupting
 - **📊 Collapse summary** — on answer delivery the box folds into `-# 🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns` (openclaw's core mechanism)
 - **🪄 Markdown tables → Discord embeds** — `tableMode: embed` renders tables as real Discord embed cards
 - **⌨️ Command system** — 88+ global commands + 55 `/skill` subcommands (grouped by category, guild-scoped registration), executed locally without hitting the model; `/todos`, `/whimsy`, `/sessions`, `/abort`, `/compact` bridged directly
