@@ -188,8 +188,17 @@ export function extractSkillSubcommands(merged: ChatCommandDefinition[]): SkillS
   for (const skill of merged) {
     if (skill.source !== "skill") continue;
     const native = skill.nativeName ?? "";
-    const stripped = native.replace(/^skill-/, "");
-    let subName = stripped && DISCORD_COMMAND_NAME_RE.test(stripped) ? stripped : native;
+    // 优先用 SKILL.md 目录名（完整未截断——nativeName 经 sanitize 截断 32，
+    // 长名如 finishing-a-development-branch 会变 finishing-a-development-br，分类匹配不上）
+    let subName = "";
+    if (typeof skill.sourcePath === "string" && skill.sourcePath) {
+      const dirName = skill.sourcePath.split(/[\\/]/).filter(Boolean).slice(-2, -1)[0] ?? "";
+      if (dirName && DISCORD_COMMAND_NAME_RE.test(dirName)) subName = dirName;
+    }
+    if (!subName) {
+      const stripped = native.replace(/^skill-/, "");
+      subName = stripped && DISCORD_COMMAND_NAME_RE.test(stripped) ? stripped : native;
+    }
     // 去重冲突：同名子命令时保留全名（极罕见，防御）
     let candidate = subName;
     let n = 2;

@@ -186,6 +186,21 @@ function assert(cond, label) {
   assert(groups.every((g) => g.subs.length <= 25), '每组 ≤25（Discord options 上限）');
   assert(groups.reduce((n, g) => n + g.subs.length, 0) === 5, `全部 skill 覆盖（实际 ${groups.reduce((n, g) => n + g.subs.length, 0)}）`);
 
+  // sourcePath 目录名优先（未截断，分类匹配完整名）
+  {
+    const fakePi2 = {
+      getCommands: () => [
+        { name: 'skill:finishing-a-development-branch', description: 'X', source: 'skill',
+          sourceInfo: { path: '/home/ubuntu/.pi/agent/npm/node_modules/pi-superpowers/skills/finishing-a-development-branch/SKILL.md' } },
+      ],
+    };
+    const merged2 = mergeCommandSets(buildBuiltinCommands(), collectPiRuntimeCommands(fakePi2));
+    const subs2 = extractSkillSubcommands(merged2);
+    assert(subs2[0]?.subName === 'finishing-a-development-branch', `目录名优先于截断 nativeName（实际 ${subs2[0]?.subName}）`);
+    const groups2 = buildSkillGroups(merged2);
+    assert(groups2.find((g) => g.groupName === 'dev')?.subs.length === 1, '完整名命中 dev 分类');
+  }
+
   // 真实规模：56 个 skill 分组后每组仍 ≤25
   const many = Array.from({ length: 56 }, (_, i) => ({
     key: 's' + i,
