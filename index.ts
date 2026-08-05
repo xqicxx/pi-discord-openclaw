@@ -734,7 +734,9 @@ export default function (pi: ExtensionAPI) {
 
         // 笔记 25 续：/skill:xxx 进 Discord —— 单个 /skill 命令 + 二级分类
         // （subcommand groups：/skill video hyperframes；Discord 每命令 options 上限 25，
-        // 55 个 skill 分 4 组 video/dev/fabric/tools 各 ≤25），guild 级注册（≤100/guild）
+        // 55 个 skill 分 4 组 video/dev/fabric/tools 各 ≤25）。
+        // 修复：同时注册到全局（DM 可见）和 guild（服务器内可见）。
+        // 全局命令数 88+1=89 < 100 上限，安全。
         const skillGroups = buildSkillGroups(merged);
         if (skillGroups.length > 0) {
           const skillCommand = {
@@ -752,6 +754,12 @@ export default function (pi: ExtensionAPI) {
             })),
           };
           try {
+            // 全局注册（DM 可见）
+            await rest.registerApplicationCommands(applicationId, [skillCommand]);
+            console.log(
+              `${TAG} 已注册 /skill 命令（${skillGroups.length} 组 ${skillGroups.reduce((n, g) => n + g.subs.length, 0)} 个 skill）到全局（DM 可见）`,
+            );
+            // 同时注册到每个 guild（服务器内可见）
             const guilds = await rest.listMyGuilds();
             for (const guild of guilds) {
               await rest.registerGuildApplicationCommands(applicationId, guild.id, [skillCommand]);
@@ -765,7 +773,7 @@ export default function (pi: ExtensionAPI) {
                 ? JSON.stringify((error as { body?: unknown }).body)
                 : undefined;
             console.error(
-              `${TAG} guild /skill 命令注册失败：`,
+              `${TAG} /skill 命令注册失败：`,
               error instanceof Error ? error.message : String(error),
               detail ? `${detail}` : "",
             );
