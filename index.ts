@@ -254,8 +254,6 @@ export default function (pi: ExtensionAPI) {
   let activeChannelId: string | undefined;
   // typing 节流（笔记 25 性能：10s 一次）
   let lastTypingAtMs = 0;
-  // 回答首条分隔线（笔记 26：每个 turn 首条 answer flush 时加一次）
-  let answerFirstFlush = true;
   // 命令执行 ctx（最近一次事件 handler 的 ExtensionContext 适配，笔记 21）
   let commandCtx: CommandExecutionCtx | undefined;
   // bot username（/cmd@bot mention 剥离用，READMEY.user）
@@ -304,15 +302,9 @@ export default function (pi: ExtensionAPI) {
       debounceMs: cfg.inbound.debounceMs,
       toolProgressLines: cfg.streaming.toolProgress,
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
-      // 笔记 26：回答首条加分隔线（与 > 🧠 思考 blockquote 形成视觉区分，不再一团）
-      formatAnswerText: (text) => {
-        const formatted = convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code");
-        if (answerFirstFlush) {
-          answerFirstFlush = false;
-          return `━━━━━━━━━━━━━━━━━━\n${formatted}`;
-        }
-        return formatted;
-      },
+      // 笔记 26：区分靠 openclaw 折叠摘要（progress 方块变 -# 小字摘要），回答不加分隔线
+      formatAnswerText: (text) =>
+        convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code"),
     },
   });
 
@@ -633,8 +625,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => {
     captureCtx(ctx);
     bridge.beginTurn({ chatId: activeChannelId ?? "default" });
-    // 笔记 26：新 turn 重置回答分隔线标记
-    answerFirstFlush = true;
     void statusReactions?.setThinking();
   });
   pi.on("message_update", (event, ctx) => {

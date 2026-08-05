@@ -132,15 +132,15 @@ function assert(cond, label) {
   lane.pushReasoningProgress(' installation');
   lane.pushReasoningProgress('!');
   const last = previews.at(-1) ?? '';
-  assert(last.includes('> 🧠 _Considering plugin installation!_'), '思维链在方块里流动（累积完整，blockquote 区分）');
+  assert(last.includes('🧠 _Considering plugin installation!_'), '思维链在方块里流动（累积完整，openclaw 无 blockquote）');
   assert(previews.length <= 4, '思维行原地替换不爆行');
   lane.onToolStart({ id: 't1', name: 'exec', args: { cmd: 'go test' } });
   const afterTool = previews.at(-1) ?? '';
-  assert(afterTool.includes('🛠️') && afterTool.includes('> 🧠 _Considering plugin installation!_'), '工具行与思维行同方块');
+  assert(afterTool.includes('🛠️') && afterTool.includes('🧠 _Considering plugin installation!_'), '工具行与思维行同方块');
   lane.pushReasoningProgress('Now checking');
   lane.pushReasoningProgress(' the results');
   const final = previews.at(-1) ?? '';
-  assert(final.includes('> 🧠 _Now checking the results_'), '工具行 commit 后新思考另起一行');
+  assert(final.includes('🧠 _Now checking the results_'), '工具行 commit 后新思考另起一行');
 }
 
 // 12. thinking 开关关闭 → 思维链不注入
@@ -169,5 +169,37 @@ function assert(cond, label) {
   assert(last.includes('🛠️ 1 tool call'), '折叠摘要含工具数');
 }
 
+
+// 14. openclaw 折叠摘要（笔记 26）：endTurn 始终折叠为 -# 小字摘要，多段思考计数
+{
+  const previews = [];
+  const lane = new ProgressLane({ enabled: true, maxLines: 8 }, {
+    updatePreview: (p) => previews.push(p.text),
+  });
+  lane.beginTurn();
+  lane.pushReasoningProgress('first thought');
+  lane.onToolStart({ id: 't1', name: 'bash', args: { cmd: 'ls' } }); // commit 第 1 段思考
+  lane.pushReasoningProgress('second thought');
+  lane.endTurn();
+  const last = previews.at(-1) ?? '';
+  assert(last.startsWith('-# '), `摘要以 -# 小字开头（实际 ${last.slice(0, 20)}）`);
+  assert(last.includes('🧠 2 thoughts'), `多段思考计数 2（实际 ${last}）`);
+  assert(last.includes('🛠️ 1 tool call'), '摘要含工具数');
+  assert(/⏱️ \d+s/.test(last), '摘要含耗时');
+  assert(!last.includes('✅') && !last.includes('处理完成'), '不用误导的 ✅ 格式');
+}
+
+// 15. 纯思考 turn（无工具）折叠摘要
+{
+  const previews = [];
+  const lane = new ProgressLane({ enabled: true, maxLines: 8 }, {
+    updatePreview: (p) => previews.push(p.text),
+  });
+  lane.beginTurn();
+  lane.pushReasoningProgress('just thinking');
+  lane.endTurn();
+  const last = previews.at(-1) ?? '';
+  assert(last.includes('🧠 1 thought') && last.includes('⏱️'), `纯思考摘要（实际 ${last}）`);
+}
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);

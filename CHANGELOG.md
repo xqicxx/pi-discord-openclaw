@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.16: 按 openclaw 原版重做思考/输出区分（笔记 26）
+
+- `Research`: 调研 openclaw 机制（docs/openclaw-research/26-thinking-answer-separation.md）——核心不是格式花哨，而是**回答投递时 progress 方块折叠成一行小字摘要**（buildProgressSummaryLine：`-# 🧠 3 thoughts · 🛠️ 2 tool calls · ⏱️ 45s`，-# 为 Discord 小字灰色文本），思考细节不残留；思考行本身是 `🧠 _斜体_`（无 blockquote）；回答为干净独立消息（无分隔线）。
+- `Thinking Line`: 撤销 0.1.15 的 `> ` blockquote，恢复 `🧠 _斜体_`（openclaw reasoningLinePrefix 一致）。
+- `Collapse Summary`: endTurn 始终把 progress 方块折叠为 openclaw 格式摘要（-# 🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns），替代误导的「✅ N 个工具调用完成」。
+- `Thought Counting`: 思考段计数改 openclaw closePendingWindowThought 语义——思考窗口闭合时 +1（工具行 commit / endTurn 折叠），多段思考计数正确。
+- `Answer Cleanup`: 撤销回答分隔线（━━━），回答消息干净独立（openclaw 无分隔线设计）。
+- `Tests`: progress-lane.test 新增折叠摘要用例（-# 格式/多段计数/纯思考 turn），更新无 blockquote 断言。Impact: 全量 17 测试文件全绿，typecheck 通过。
+
 ## 0.1.15: 思考/回答视觉区分（笔记 26 续）
 
 - `Thinking Blockquote`: progress 方块里思维行从 `🧠 _斜体_` 改为 `> 🧠 _斜体_`（Discord 引用样式：灰色竖线 + 缩进），与 🛠️ 工具行、回答正文显著区分——不再是一团文字。
