@@ -87,8 +87,6 @@ export class DraftStream {
   private deliveredText = "";
   /** Issue #1：已作为独立消息投递的 chunk 数（避免重复发送旧块）。 */
   private deliveredChunkCount = 0;
-  /** Issue #12：已发送的独立 chunk 消息 ID 列表（按 index 对应 chunks[1+]）。 */
-  private chunkMessageIds: string[] = [];
   /** Issue #1：本次 flush 正在投递的完整文本基线（飞行竞态防护）。 */
   private inFlightText = "";
   /** Issue #1：未投递的增量文本（相对 deliveredText / inFlightText 之后的部分）。 */
@@ -104,6 +102,8 @@ export class DraftStream {
   private previewThrottleMs: number;
   private previewLastSentAtMs = 0;
   private previewTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Issue #12：已发送的独立 chunk 消息 ID 列表（按 index 对应 chunks[1+]）。 */
+  private chunkMessageIds: string[] = [];
 
   constructor(options: DraftStreamOptions) {
     this.throttleMs = Math.max(MIN_THROTTLE_MS, options.throttleMs ?? DEFAULT_THROTTLE_MS);
@@ -254,7 +254,7 @@ export class DraftStream {
       // Issue #12 修复：已发送的独立 chunk 消息按 index 更新（而非只发新块）。
       for (let i = 1; i < chunks.length; i++) {
         if (i - 1 < this.chunkMessageIds.length) {
-          // 已发送过 → 更新内容
+          // 已存在独立消息 → 更新内容
           await this.transport.editMessage(this.chunkMessageIds[i - 1], chunks[i]);
         } else {
           // 新块 → 发送并记录 ID
@@ -262,12 +262,9 @@ export class DraftStream {
           this.chunkMessageIds.push(id);
         }
       }
-      // 若块数减少，删除多余的独立消息（可选，但保持一致性）
-      while (this.chunkMessageIds.length > chunks.length - 1) {
-        const extraId = this.chunkMessageIds.pop();
-        if (extraId) {
-          try { await this.transport.deleteMessage(extraId); } catch { /* ignore */ }
-        }
+      // 若块数减少（理论上不会，但防御性截断）
+      if (chunks.length - 1 < this.chunkMessageIds.length) {
+        this.chunkMessageIds.length = chunks.length - 1;
       }
       this.deliveredChunkCount = Math.max(this.deliveredChunkCount, chunks.length);
       // 基线存「未格式化」完整文本：updateDelta 拼接时与 pendingText 同域。
@@ -346,10 +343,6 @@ export class DraftStream {
     if (this.previewTimer) clearTimeout(this.previewTimer);
     if (this.streamMessageId !== undefined) {
       try { await this.transport.deleteMessage(this.streamMessageId); } catch { /* ignore */ }
-    }
-    // Issue #12：清理独立 chunk 消息
-    for (const id of this.chunkMessageIds) {
-      try { await this.transport.deleteMessage(id); } catch { /* ignore */ }
     }
     await this.deletePreviewIfDwelled();
     this.streamMessageId = undefined;
