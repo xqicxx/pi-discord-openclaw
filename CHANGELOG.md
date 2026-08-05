@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.14: 更多命令本地桥接（笔记 26 续）
+
+- `Whimsy Bridge`: /whimsy status/on/off/reset 本地实现——状态存 ~/.pi/agent/settings.json 的 whimsical 字段（与 pi-agent-extensions/whimsical 同格式双向兼容）；交互调权重（TUI 组件）保持终端引导。新增 src/commands/whimsy.ts + 测试（9 断言）。
+- `Exit Aliases`: /bye /exit = /quit 别名（ctx.shutdown()，对齐 whimsical 扩展的退出命令）。
+- `Sessions List`: /sessions 只读列表（~/.pi/agent/sessions 最近 15 个会话文件）；切换会话需终端（上游 switchSession 仅 ExtensionCommandContext 可用——命令 ctx，Discord 事件 ctx 拿不到）。
+- `Bridge Feasibility Map`: 盘点 88 命令——本地可执行 29 个；prompt 模板本地执行 ~40 个；无法桥接并保持终端引导：answer/files/workflow/review（TUI 交互组件）、btw/llama/loop/chain/run（直接 LLM/工作流调用）、mcp/mcp-auth（凭据交互）、fork/clone/resume/reload/new/reset/navigateTree（上游 API 仅命令 ctx）、share/import/trust/login/logout（无 API）。
+- `Tests`: 新增 whimsy.test.mjs。Impact: 全量 17 测试文件全绿，typecheck 通过。
+
 ## 0.1.13: /todos 本地实现（方案二，笔记 26）
 
 - `Todos Bridge`: pi 的 /todos 是 TUI 交互界面（依赖 UI mode），Discord 远程调用无法显示 → 新增 src/commands/todos.ts 在桥接层直接读写 .pi/todos/<id>.md（JSON front matter + markdown body，与 pi-agent-extensions/todos 同一存储格式，双向兼容）。支持 /todos list/add <标题>/done <序号|id>/open <序号|id>/show <序号|id>/delete <序号|id>；id 支持 TODO-xxxx 与裸 hex；写前检查 .lock（TUI 正在编辑时拒绝，防覆盖）。todo 目录 = PI_TODO_PATH 或 <cwd>/.pi/todos。

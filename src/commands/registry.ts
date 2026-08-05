@@ -461,6 +461,44 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
       category: "options",
       tier: "standard",
     }),
+    // 笔记 26：更多 TUI/扩展命令本地桥接（whimsy/bye/exit/sessions）
+    defineChatCommand({
+      key: "whimsy",
+      nativeName: "whimsy",
+      description: "Whimsy chaos mode: status / on / off / reset.",
+      category: "management",
+      tier: "standard",
+      args: [
+        {
+          name: "action",
+          description: "status / on / off / reset",
+          type: "string",
+          required: false,
+          choices: ["status", "on", "off", "reset"],
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "bye",
+      nativeName: "bye",
+      description: "Exit pi with a whimsical goodbye (alias of /quit).",
+      category: "session",
+      tier: "power",
+    }),
+    defineChatCommand({
+      key: "exit",
+      nativeName: "exit",
+      description: "Exit pi (alias of /quit).",
+      category: "session",
+      tier: "power",
+    }),
+    defineChatCommand({
+      key: "sessions",
+      nativeName: "sessions",
+      description: "List session files (switching requires terminal).",
+      category: "session",
+      tier: "standard",
+    }),
     // 笔记 26：/todos 本地实现（方案二——TUI 命令远程不可用，桥接层直接读写存储）
     defineChatCommand({
       key: "todos",

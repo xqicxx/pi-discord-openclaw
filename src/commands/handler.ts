@@ -14,6 +14,7 @@ import {
 } from "./registry.ts";
 import type { PiRpcBridge } from "../rpc/rpc-bridge.ts";
 import { todosAdd, todosDelete, todosList, todosSetStatus, todosShow } from "./todos.ts";
+import { whimsyReset, whimsySet, whimsyStatus } from "./whimsy.ts";
 
 /** 执行依赖：pi API + 最近一次事件 ctx 捕获器（index.ts 注入）+ RPC 只读桥。 */
 export interface CommandHandlerDeps {
@@ -190,6 +191,54 @@ export async function executeCommand(
       if (!ctx) return reply("桥接尚未就绪，无法退出。");
       ctx.shutdown();
       return reply("👋 正在退出 pi…");
+    }
+
+    // 笔记 26：bye/exit = quit 别名（扩展 whimsical 的退出命令）
+    case "bye":
+    case "exit": {
+      if (!ctx) return reply("桥接尚未就绪，无法退出。");
+      ctx.shutdown();
+      return reply("👋 正在退出 pi…");
+    }
+
+    // 笔记 26：/whimsy 本地桥接（状态在 settings.json，与扩展同格式）
+    case "whimsy": {
+      try {
+        const action = (values.action as string | undefined)?.trim().toLowerCase() ?? "status";
+        switch (action) {
+          case "on":
+            return reply(await whimsySet(true), false);
+          case "off":
+            return reply(await whimsySet(false), false);
+          case "reset":
+            return reply(await whimsyReset(), false);
+          case "status":
+          default:
+            return reply(await whimsyStatus(), false);
+        }
+      } catch (err) {
+        return reply(`❌ /whimsy 执行失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 笔记 26：/sessions 只读列表（切换会话需终端——上游 switchSession 仅命令 ctx 可用）
+    case "sessions": {
+      if (!ctx?.getSessionInfo) return reply("该命令需要会话能力，请在终端执行 /sessions");
+      try {
+        const { readdir } = await import("node:fs/promises");
+        const { homedir } = await import("node:os");
+        const pathMod = await import("node:path");
+        const dir = pathMod.join(homedir(), ".pi", "agent", "sessions", "--home-ubuntu--");
+        const files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).sort().reverse();
+        if (files.length === 0) return reply("📁 暂无会话文件。");
+        const lines = files.slice(0, 15).map((f) => {
+          const m = f.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[0-9a-f-]+)\.jsonl$/);
+          return `• ${m ? m[1].replace("T", " ").replace("-", ":") : f}`;
+        });
+        return reply([`📁 **会话文件（最近 ${lines.length} 个）**：`, ...lines, "💡 切换会话请在终端执行 /resume（上游 API 仅命令 ctx 可用）"].join("\n"), false);
+      } catch (err) {
+        return reply(`❌ /sessions 读取失败：${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // ---- 笔记 22：终端 only 命令桥接（只读本地实现）----
