@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.17: 修复长回复分块切断代码围栏（Issue #4）
+
+- `Chunk Fence-Aware`: `chunkDiscordText`（src/dispatch/markdown-tables.ts）升级为真正的围栏感知——围栏块（``` / ~~~ 配对）作为最小不可分单元整体保留，表格转换器输出的 ```+ASCII表格+``` 永远不会被切断；非围栏内容按行边界分块；段落超限时内部行切（行完整优先），超长行才硬切 fallback。未闭合围栏也整体保留（避免孤立围栏）。
+- `Use It`: draft-stream.ts 投递分块从 `splitChunks`（纯换行感知，src/lanes/lane.ts）切换为 `chunkDiscordText`——围栏感知实现此前存在但从未被使用（Issue #4 根因）。
+- `Regression`: markdown-tables.test 新增 3 用例——表格代码块跨切分点围栏成对/表格行不散落、非超长行不切半、未闭合围栏整体保留。Impact: 全量 18 测试文件全绿，typecheck 通过。
 ## 0.1.16: 按 openclaw 原版重做思考/输出区分（笔记 26）
 
 - `Research`: 调研 openclaw 机制（docs/openclaw-research/26-thinking-answer-separation.md）——核心不是格式花哨，而是**回答投递时 progress 方块折叠成一行小字摘要**（buildProgressSummaryLine：`-# 🧠 3 thoughts · 🛠️ 2 tool calls · ⏱️ 45s`，-# 为 Discord 小字灰色文本），思考细节不残留；思考行本身是 `🧠 _斜体_`（无 blockquote）；回答为干净独立消息（无分隔线）。

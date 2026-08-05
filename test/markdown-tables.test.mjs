@@ -81,5 +81,44 @@ function assert(cond, label) {
   assert(chunkDiscordText('短文本').length === 1, '短文本单块');
 }
 
+
+// 10. Issue #4 回归：表格代码块跨切分点 → 围栏整体保留（不产生孤立围栏）
+{
+  const F = '\`\`\`';
+  const filler = Array(75).fill('- 前面是一些普通说明文字，占位用。').join('\n');
+  const table = [
+    '| 项目 | 状态 |',
+    '|---|---|',
+    '| 审查 workflow | ✅ 你原来的自写版恢复（手动触发，不费 Actions 额度） |',
+    '| 模型 | ✅ \`gemini-2.5-flash\` → **\`gemini-3.6-flash\`**（2.5 已弃用；3.6 是 GA 工作马，更便宜质量更好） |',
+    '| API key | ✅ 你原有的 Google key 继续用（GitHub Actions 在美国跑，**不受地区封锁**） |',
+    '| 实测 | ✅ 17 秒完成 PR 审查，评论分级清晰（MAJOR/MINOR + 中英 verdict） |',
+  ].join('\n');
+  const tail = '\n\n## 日常用法\n\n' + F + 'bash\n# 手动审查指定 PR\ngh workflow run "Gemini PR Review" -f pr_number=<PR号>\n' + F;
+  const reply = filler + '\n\n' + table + tail;
+  const formatted = convertMarkdownTables(reply);
+  assert(formatted.length > 1900, '前置：转换后文本超 1900（触发分块）');
+  const chunks = chunkDiscordText(formatted, 1900);
+  assert(chunks.length > 1, '前置：产生多块');
+  const fenceOk = chunks.every((c) => (c.match(/\`\`\`/g) || []).length % 2 === 0);
+  assert(fenceOk, '每块围栏数成对（表格代码块未被切断）');
+  assert(!chunks.some((c) => c.includes('| API key') && !c.includes('| 项目')), '表格行不散落在缺表头的块里');
+}
+
+// 11. 非超长行不被切半（行完整保留）
+{
+  const lines = Array(30).fill('- 这是一行普通说明文字，用于验证行完整性。').join('\n');
+  const chunks = chunkDiscordText(lines, 500);
+  assert(chunks.length > 1, '前置：多块');
+  assert(chunks.every((c) => c.split('\n').every((l) => l.startsWith('- 这是一行普通说明文字'))), '行未被从中间切断');
+}
+
+// 12. 未闭合围栏也整体保留
+{
+  const text = Array(600).fill('x').join('') + '\n\`\`\`js\ncode without close';
+  const chunks = chunkDiscordText(text, 1900);
+  assert(chunks[chunks.length - 1].includes('\`\`\`js'), '未闭合围栏块整体保留在最后一块');
+}
+
 console.log(`\nmarkdown-tables tests: ${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);

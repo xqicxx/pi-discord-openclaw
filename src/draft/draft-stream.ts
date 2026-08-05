@@ -9,7 +9,7 @@
 //   5. 失败重试：MAX_CONSECUTIVE_FAILURES 内重试
 //   6. flood 退避：读 retry_after，最长挂起 60s
 
-import { splitChunks } from "../lanes/lane.ts";
+import { chunkDiscordText } from "../dispatch/markdown-tables.ts";
 
 const DEFAULT_THROTTLE_MS = 1000;
 const MIN_THROTTLE_MS = 250;
@@ -239,7 +239,7 @@ export class DraftStream {
     try {
       // 笔记 24: 最终投递前格式化（表格 → ASCII 代码块 + 指令标签剥离）
       const text = this.formatText ? this.formatText(rawText) : rawText;
-      const chunks = splitChunks(text, this.chunkSize);
+      const chunks = chunkDiscordText(text, this.chunkSize);
       if (this.streamMessageId === undefined) {
         this.streamMessageId = await this.transport.sendMessage(chunks[0] ?? "");
         this.deliveredChunkCount = 1;

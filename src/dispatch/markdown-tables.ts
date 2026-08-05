@@ -131,39 +131,94 @@ export function stripInlineDirectiveTagsForDelivery(text: string): StrippedText 
 // ---- 围栏感知分块（openclaw chunkDiscordText 语义） ----
 
 /**
- * 按 2000 字符分块，代码围栏（``` 或 ~~~）感知：
- * 围栏内优先在换行处断开；超长行才硬切（fallback，与 openclaw 一致）。
+ * 按 maxChars 分块，代码围栏（``` 或 ~~~）感知（Issue #4 修复）：
+ * 围栏块（开围栏行到闭合行）整体作为最小不可分单元 —— 表格转换器输出的
+ * ```+ASCII表格+``` 永远不会被切断，避免孤立围栏导致的排版错乱。
+ * 非围栏内容按行边界分块；单行/围栏块超过 maxChars 时才内部切（行完整优先，
+ * 超长行才硬切 fallback）。
  */
 export function chunkDiscordText(text: string, maxChars: number = DISCORD_TEXT_CHUNK_LIMIT): string[] {
   if (text.length <= maxChars) return [text];
+  const lines = text.split("\n");
+
+  // 1) 聚合段落：围栏块（``` / ~~~ 配对）整体为一段；其余行为单行段
+  const paragraphs: string[] = [];
+  let fence: string | undefined;
+  let fenceBuf: string[] = [];
+  const flushFence = (): void => {
+    if (fenceBuf.length) paragraphs.push(fenceBuf.join("\n"));
+    fenceBuf = [];
+  };
+  for (const line of lines) {
+    if (fence === undefined) {
+      const m = /^\s*(```|~~~)/.exec(line);
+      if (m) {
+        fence = m[1];
+        fenceBuf = [line];
+        const closes = (line.match(new RegExp(fence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+        if (closes >= 2) {
+          flushFence();
+          fence = undefined;
+        }
+      } else {
+        paragraphs.push(line);
+      }
+    } else {
+      fenceBuf.push(line);
+      const closes = (line.match(new RegExp(fence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+      if (closes >= 1) {
+        flushFence();
+        fence = undefined;
+      }
+    }
+  }
+  flushFence(); // 未闭合围栏也整体保留（避免孤立围栏）
+
+  // 2) 段落级分块：段落不跨块；段落超限时内部行切（行完整优先）
   const chunks: string[] = [];
   let current = "";
-  const lines = text.split("\n");
-  for (const line of lines) {
-    // 单行本身超长 → 硬切（保持每块 ≤ maxChars）
-    if (line.length > maxChars) {
+  const push = (para: string): void => {
+    if (para.length > maxChars) {
       if (current) {
         chunks.push(current);
         current = "";
       }
-      let rest = line;
-      while (rest.length > maxChars) {
-        chunks.push(rest.slice(0, maxChars));
-        rest = rest.slice(maxChars);
+      let buf = "";
+      for (const pline of para.split("\n")) {
+        if (pline.length > maxChars) {
+          // 超长行硬切 fallback（保持每块 ≤ maxChars）
+          if (buf) {
+            chunks.push(buf);
+            buf = "";
+          }
+          let rest = pline;
+          while (rest.length > maxChars) {
+            chunks.push(rest.slice(0, maxChars));
+            rest = rest.slice(maxChars);
+          }
+          buf = rest;
+          continue;
+        }
+        const add = buf ? "\n" + pline : pline;
+        if (buf && buf.length + add.length > maxChars) {
+          chunks.push(buf);
+          buf = pline;
+        } else {
+          buf += add;
+        }
       }
-      current = rest;
-      continue;
+      if (buf.trim().length) chunks.push(buf);
+      return;
     }
-    const addition = current ? "\n" + line : line;
-    if (current && current.length + addition.length > maxChars) {
-      // 行边界断开（围栏行 ``` 作为整行保留，天然围栏感知）
+    const add = current ? "\n" + para : para;
+    if (current && current.length + add.length > maxChars) {
       chunks.push(current);
-      current = line;
+      current = para;
     } else {
-      // 累积：current + 增量（``` 行边界保留）
-      current += addition;
+      current += add;
     }
-  }
+  };
+  for (const p of paragraphs) push(p);
   if (current.trim().length) chunks.push(current);
   return chunks;
 }
