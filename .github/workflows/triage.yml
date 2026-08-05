@@ -54,14 +54,28 @@ jobs:
           {{"action": "worth-fixing|wontfix|needs-info|spam", "labels": ["只放仓库里存在的标签"], "complexity": "低|中|高", "risk": "低|中|高", "reason": "2-3 句中文判定理由", "suggestion": "可选：修复建议或补充信息请求"}}'''
 
           body = {'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 1024, 'responseMimeType': 'application/json'}}
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048}}
           req = urllib.request.Request(
               f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}',
               data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
           with urllib.request.urlopen(req, timeout=120) as resp:
               data = json.load(resp)
           text = data['candidates'][0]['content']['parts'][0]['text']
-          verdict = json.loads(text)
+          def parse_json(s):
+              s = s.strip()
+              if s.startswith('```'):
+                  s = s.split('```')[1]
+                  if s.startswith('json'):
+                      s = s[4:]
+              try:
+                  return json.loads(s)
+              except Exception:
+                  i, j = s.find('{'), s.rfind('}')
+                  if i >= 0 and j > i:
+                      return json.loads(s[i:j+1])
+                  raise
+          print('finishReason:', data.get('candidates',[{}])[0].get('finishReason'), '| output chars:', len(text))
+          verdict = parse_json(text)
 
           action = verdict['action']
           reason = verdict.get('reason', '')

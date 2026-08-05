@@ -57,6 +57,20 @@ jobs:
           with urllib.request.urlopen(req, timeout=180) as resp:
               data = json.load(resp)
           text = data['candidates'][0]['content']['parts'][0]['text']
+          def parse_json(s):
+              s = s.strip()
+              if s.startswith('```'):
+                  s = s.split('```')[1]
+                  if s.startswith('json'):
+                      s = s[4:]
+              try:
+                  return json.loads(s)
+              except Exception:
+                  i, j = s.find('{'), s.rfind('}')
+                  if i >= 0 and j > i:
+                      return json.loads(s[i:j+1])
+                  raise
+          print('finishReason:', data.get('candidates',[{}])[0].get('finishReason'), '| output chars:', len(text))
           print('=== GEMINI 修复方案 ===')
           print(text)
           with open('/tmp/fix-plan.txt', 'w') as f:
