@@ -3,8 +3,6 @@ name: AI Merger
 on:
   pull_request_review:
     types: [submitted]
-  pull_request:
-    types: [labeled]
 
 permissions:
   contents: write
@@ -12,16 +10,26 @@ permissions:
 
 jobs:
   merge:
-    if: contains(github.event.review.state, 'approved') || contains(github.event.label.name, 'ai-approved')
+    if: github.event.review.state == 'approved' && contains(github.event.pull_request.labels.*.name, 'ai-approved')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Merge PR
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
         run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+          # Check if PR is mergeable
+          STATE=$(gh pr view $PR_NUMBER --repo $REPO --json mergeable -q '.mergeable')
+          if [ "$STATE" != "MERGEABLE" ]; then
+            echo "PR not mergeable (state: $STATE), skipping"
+            exit 0
+          fi
+          # Merge with squash
           gh pr merge $PR_NUMBER --repo $REPO --squash --delete-branch
+          echo "Merged PR #$PR_NUMBER"
