@@ -87,6 +87,55 @@ function renderAsciiTable(block: TableBlock): string {
  *   | --- | --- |
  *   | 1   | 2   |
  */
+export interface EmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+export interface EmbedPayload {
+  title?: string;
+  description?: string;
+  color?: number;
+  fields?: EmbedField[];
+  footer?: { text: string };
+}
+
+/**
+ * markdown 表格 → Embed fields（每行一个 field，name=第一列，value=其余列）。
+ * 表头放 description，footer 放来源。
+ * 返回 null 表示无表格。
+ */
+export function convertMarkdownTableToEmbed(markdown: string): { content: string; embeds: EmbedPayload[] } | null {
+  if (!markdown) return null;
+  const lines = markdown.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: EmbedField[] = [];
+      for (const row of block.rows) {
+        if (row.length === 0) continue;
+        const name = row[0] ?? "";
+        const value = row.slice(1).join(" | ") || "—";
+        fields.push({ name: name.slice(0, 256), value: value.slice(0, 1024), inline: true });
+        if (fields.length >= 25) break;
+      }
+      const embeds: EmbedPayload[] = [{
+        title: block.headers.join(" | ").slice(0, 256),
+        fields,
+        color: 0x5865F2,
+      }];
+      const before = lines.slice(0, i).join("\n").trim();
+      const after = lines.slice(i + 2 + block.rows.length).join("\n").trim();
+      const content = [before, after].filter(Boolean).join("\n");
+      return { content, embeds };
+    }
+    i += 1;
+  }
+  return null;
+}
+
 export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "code"): string {
   if (!markdown || mode === "off") return markdown;
   const lines = markdown.split("\n");
