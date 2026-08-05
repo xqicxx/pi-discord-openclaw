@@ -17,6 +17,8 @@
  * INTERACTION_CREATE → 命令分发。
  */
 
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   loadDiscordConnectionConfig,
@@ -745,8 +747,9 @@ export default function (pi: ExtensionAPI) {
                 })),
               }
             : undefined;
-        // 全量 = 原生命令 + /skill（一次 PUT，避免覆盖）
-        const fullCommands = skillCommand ? [...commands, skillCommand] : commands;
+        // 全量 = /skill + 原生命令（skill 排最前：全局增量补齐时优先创建 skill，
+        // DM 斜杠命令先恢复 skill 再补其他；笔记 27）
+        const fullCommands = skillCommand ? [skillCommand, ...commands] : commands;
         // 注册 helper：去重（现有命令一致则跳过 PUT，省 Discord 200/天创建额度）
         // + 全局/guild 独立容错（一个失败不影响另一个）+ 429 限流延迟重试
         const registerCommandsForScope = async (
@@ -800,28 +803,58 @@ export default function (pi: ExtensionAPI) {
         console.log(
           `${TAG} 命令集：merged=${merged.length}，跳过 skill ${skippedSkills}，含 /skill=${skillGroups.length} 组，共 ${fullCommands.length} 个`,
         );
-        // 全局注册（DM 可见）：增量补齐模式——Discord 全局命令创建额度 200/天按滚动窗口
-        // 释放，一次 PUT 全量常因额度不足 429。改为：GET 现有 → 逐个 POST 缺失命令，
-        // 429 时按 retry_after 等待（额度释放一个补一个），后台自动补全不阻塞启动。
+        // 全局注册（DM 可见）：reconcile 差异同步（笔记 27，对齐 openclaw DiscordCommandDeployer）
+        // - GET 现有 → 缺失 POST create / 内容变化 PATCH edit（不烧 200/天 create 额度）/ 多余 DELETE
+        // - 429 等 retry_after 重试（额度滚动释放一个补一个），skill 排最前优先补齐
+        // - 全部成功才写 hash 缓存 → 命令集无变化时重启 0 请求
+        const comparableCommand = (c: { name: string; description?: string; options?: unknown }) =>
+          JSON.stringify({
+            name: c.name,
+            description: c.description ?? "",
+            options: c.options ?? [],
+          });
+        const commandsEqual = (
+          a: { name: string; description?: string; options?: unknown },
+          b: { name: string; description?: string; options?: unknown },
+        ) => comparableCommand(a) === comparableCommand(b);
+        const CACHE_PATH = `${process.env.HOME ?? "/home/ubuntu"}/.pi/agent/discord-commands-cache.json`;
+        const cmdHash = createHash("sha256")
+          .update(
+            JSON.stringify(
+              fullCommands
+                .map((c) => ({ name: c.name, description: c.description ?? "", options: c.options ?? [] }))
+                .sort((a, b) => a.name.localeCompare(b.name)),
+            ),
+          )
+          .digest("hex");
         void (async () => {
           try {
+            // hash 命中 → 命令集无变化，跳过全部请求（对齐 openclaw putCommandSetIfChanged）
+            try {
+              const cached = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as { hash?: string };
+              if (cached?.hash === cmdHash) {
+                console.log(`${TAG} 全局命令集无变化（hash 命中），跳过注册`);
+                return;
+              }
+            } catch { /* 无缓存文件 */ }
             const existing = await rest.listApplicationCommands(applicationId);
-            const existingNames = new Set(existing.map((c) => c.name));
-            const missing = fullCommands.filter((c) => !existingNames.has(c.name));
-            if (missing.length === 0) {
-              console.log(`${TAG} 全局命令已完整（${fullCommands.length} 个），跳过注册`);
-              return;
-            }
-            console.log(
-              `${TAG} 全局命令补齐：现有 ${existing.length}，缺失 ${missing.length}（逐个创建，受 200/天额度滚动释放限制）`,
-            );
+            const existingByName = new Map(existing.map((c) => [c.name, c]));
+            const desiredNames = new Set(fullCommands.map((c) => c.name));
             let created = 0;
-            for (const cmd of missing) {
+            let edited = 0;
+            let incomplete = false;
+            for (const cmd of fullCommands) {
+              const cur = existingByName.get(cmd.name);
               let attempts = 0;
               for (;;) {
                 try {
-                  await rest.createApplicationCommand(applicationId, cmd);
-                  created += 1;
+                  if (!cur) {
+                    await rest.createApplicationCommand(applicationId, cmd);
+                    created += 1;
+                  } else if (!commandsEqual(cur, cmd)) {
+                    await rest.editApplicationCommand(applicationId, cur.id, cmd);
+                    edited += 1;
+                  }
                   break;
                 } catch (error) {
                   attempts += 1;
@@ -831,8 +864,10 @@ export default function (pi: ExtensionAPI) {
                     600_000,
                   );
                   if (attempts >= 3) {
+                    incomplete = true;
                     console.error(
-                      `${TAG} 全局命令 /${cmd.name} 创建失败 3 次，跳过（下次启动自动补）`,
+                      `${TAG} 全局命令 /${cmd.name} 同步失败 3 次，跳过（下次启动自动补）：`,
+                      error instanceof Error ? error.message : String(error),
                     );
                     break;
                   }
@@ -842,14 +877,38 @@ export default function (pi: ExtensionAPI) {
                   await sleepMs(wait);
                 }
               }
-              if (created % 10 === 0) {
-                console.log(`${TAG} 全局命令已创建 ${created}/${missing.length}`);
+            }
+            // 删除多余的现有命令（如历史遗留的 ping）
+            let deleted = 0;
+            for (const [name, c] of existingByName) {
+              if (desiredNames.has(name)) continue;
+              try {
+                await rest.deleteApplicationCommand(applicationId, c.id);
+                deleted += 1;
+                console.log(`${TAG} 删除多余全局命令 /${name}`);
+              } catch (error) {
+                console.error(
+                  `${TAG} 删除多余全局命令 /${name} 失败：`,
+                  error instanceof Error ? error.message : String(error),
+                );
               }
             }
-            console.log(`${TAG} 全局命令补齐结束：本次创建 ${created} 个（共 ${fullCommands.length}）`);
+            console.log(
+              `${TAG} 全局命令 reconcile：新建 ${created}，更新 ${edited}，删除 ${deleted}（共 ${fullCommands.length}）${incomplete ? "，未完成（额度受限，下次继续）" : ""}`,
+            );
+            // 全部成功才写缓存（未完成时下次继续补）
+            if (!incomplete) {
+              try {
+                writeFileSync(
+                  CACHE_PATH,
+                  JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), hash: cmdHash }),
+                );
+                console.log(`${TAG} 全局命令 hash 缓存已写入（${cmdHash.slice(0, 12)}…）`);
+              } catch { /* 忽略写缓存失败 */ }
+            }
           } catch (error) {
             console.error(
-              `${TAG} 全局命令增量注册失败：`,
+              `${TAG} 全局命令 reconcile 失败：`,
               error instanceof Error ? error.message : String(error),
             );
           }
