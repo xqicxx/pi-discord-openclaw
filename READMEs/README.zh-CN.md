@@ -1,10 +1,6 @@
 # pi-discord-openclaw
 
 <p align="center">
-  <img src="../screenshot.png" alt="pi-discord-openclaw — Discord 上的 OpenClaw 流式体验" width="720" />
-</p>
-
-<p align="center">
   <strong>让 Pi 编码代理在 Discord 上复刻 OpenClaw 的流式输出体验</strong><br/>
   🧠 思考独立渲染 · 🔧 工具实时进度 · 📝 打字机式回答 · ⏭️ 连续输入合并 · ⏹️ 新消息中断旧任务
 </p>
