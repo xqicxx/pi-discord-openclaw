@@ -40,8 +40,8 @@ export interface DraftStreamOptions {
 }
 
 export interface DraftTransport {
-  sendMessage: (text: string) => Promise<string>;
-  editMessage: (messageId: string, text: string) => Promise<void>;
+  sendMessage: (text: string, embeds?: unknown[]) => Promise<string>;
+  editMessage: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   sendChatAction: (action: "typing") => Promise<void>;
 }
