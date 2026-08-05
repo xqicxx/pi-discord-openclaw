@@ -625,11 +625,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   bridge.onUserInput = async (text) => {
-    // 触发 pi turn；若正在流式输出则排队为 followUp
-    pi.sendUserMessage(text, { deliverAs: "followUp" });
+    // 笔记 29：用 steer 替代 followUp——新消息在当前工具调用结束后立即处理，
+    // 不再排队等旧任务全部完成（旧任务卡住时 bot 不再「没动静」）
+    pi.sendUserMessage(text, { deliverAs: "steer" });
   };
   // 笔记 28：watchdog/触发词中断时真正停止 pi agent（否则任务还在后台跑）
   bridge.onAbort = () => {
+    try {
+      commandCtx?.abort();
+    } catch {
+      // 忽略中断失败
+    }
+  };
+  // 笔记 29：turn 活跃时收到新用户消息 → 中断当前 agent，立即响应新消息
+  bridge.onInterrupt = () => {
     try {
       commandCtx?.abort();
     } catch {
