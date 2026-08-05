@@ -1,0 +1,84 @@
+name: AI Reviewer
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: AI code review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<PYEOF
+          import json, os, subprocess, urllib.request
+
+          repo = os.environ['REPO']
+          pr = os.environ['PR_NUMBER']
+          key = os.environ['GEMINI_API_KEY']
+
+          def gh(*args):
+              r = subprocess.run(['gh', *args, '-R', repo], capture_output=True, text=True)
+              return r.stdout.strip()
+
+          prinfo = json.loads(gh('pr', 'view', pr, '--json', 'title,body,headRefName,baseRefName'))
+          diff = gh('pr', 'diff', pr)
+          if len(diff) > 40000:
+              diff = diff[:40000] + "\n...(diff 过大已截断)"
+
+          prompt = f'''你是资深 code reviewer。审查这个 PR 的代码质量。
+
+          PR: {prinfo['title']}
+          ---
+          {prinfo['body'][:1500]}
+          ---
+          DIFF:
+          {diff}
+
+          审查维度：正确性、安全性、回归风险、测试覆盖、风格一致性。
+          输出 JSON（不要其他文字）：
+          {{"verdict": "approve或changes", "summary": "2-3 句中文总结", "blockers": ["必须修复的问题（verdict=changes 时）"], "suggestions": ["可选建议"]}}
+          只报告真实问题，不吹毛求疵。'''
+          body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                  'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 2048, 'responseMimeType': 'application/json'}}
+          req = urllib.request.Request(
+              f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}',
+              data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(req, timeout=120) as resp:
+              data = json.load(resp)
+          text = data['candidates'][0]['content']['parts'][0]['text']
+          review = json.loads(text)
+
+          labels = gh('label', 'list', '--json', 'name')
+          labels = set(l["name"] for l in json.loads(labels))
+
+          if review['verdict'] == 'approve':
+              add = [l for l in ['ai-approved'] if l in labels]
+              if add:
+                  subprocess.run(['gh', 'pr', 'edit', pr, '-R', repo, '--add-label', ','.join(add)])
+              subprocess.run(['gh', 'pr', 'edit', pr, '-R', repo, '--remove-label', 'needs-work'])
+              msg = '🤖 **AI Review: 通过** ✅\n\n' + review['summary']
+              if review.get("suggestions"):
+                  msg += "\n\n💡 建议: " + "；".join(review["suggestions"])
+          else:
+              add = [l for l in ['needs-work'] if l in labels]
+              if add:
+                  subprocess.run(['gh', 'pr', 'edit', pr, '-R', repo, '--add-label', ','.join(add)])
+              subprocess.run(['gh', 'pr', 'edit', pr, '-R', repo, '--remove-label', 'ai-approved'])
+              msg = '🤖 **AI Review: 需要修改** ❌\n\n' + review['summary']
+              if review.get('blockers'):
+                  msg += "\n\n🚫 必须修复:\n" + "\n".join("- " + b for b in review["blockers"])
+          subprocess.run(['gh', 'pr', 'comment', pr, '-R', repo, '--body', msg])
+          print("verdict:", review["verdict"])
+          PYEOF
