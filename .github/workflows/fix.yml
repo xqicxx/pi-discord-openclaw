@@ -15,11 +15,11 @@ model: gemini-2.5-flash
 engine:
   id: gemini
 safe-outputs:
-  create-pull-request:
+  create_pull_request:
     auto-close-issue: true
     allowed-base-branches: ['*']
-  add-comment:
-  update-issue:
+  add_comment:
+  update_issue:
   noop:
 
 tools:
