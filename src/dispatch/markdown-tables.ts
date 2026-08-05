@@ -1,9 +1,9 @@
 // Discord 输出格式化 — 原生移植 openclaw（笔记 24）。
 // 1. convertMarkdownTables：markdown 表格 → 对齐 ASCII 表格 + 代码块包裹
 //    （openclaw tableMode "code"，Discord 默认；轻量实现，效果等同无解析器依赖）
-// 2. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed（fields 模拟表格）
-// 3. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
-// 4. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
+// 2. stripInlineDirectiveTagsForDelivery：剥离 [[audio_as_voice]] / [[reply_to:xxx]] 指令标签
+// 3. chunkDiscordText：代码围栏感知分块（2000 字符上限，openclaw chunkDiscordText 语义）
+// 4. convertMarkdownTableToEmbed：markdown 表格 → Discord Embed fields（Issue #59）
 
 /** Discord 单条消息字符上限（openclaw DISCORD_TEXT_CHUNK_LIMIT）。 */
 export const DISCORD_TEXT_CHUNK_LIMIT = 2000;
@@ -107,56 +107,6 @@ export function convertMarkdownTables(markdown: string, mode: "code" | "off" = "
   }
   if (!convertedAny) return markdown;
   return out.join("\n");
-}
-
-// ---- Embed 转换（Issue #59） ----
-
-/** Discord embed description 上限。 */
-const EMBED_DESCRIPTION_LIMIT = 2048;
-/** Discord embed field name/value 上限。 */
-const EMBED_FIELD_LIMIT = 1024;
-
-/**
- * 将 markdown 中的表格转换为 Discord Embed（fields 模拟表格）。
- * 返回 embed 数组；每个表格生成一个 embed。
- * 若 markdown 中没有表格，返回空数组。
- */
-export function convertMarkdownTableToEmbed(markdown: string): Array<{
-  title?: string;
-  description?: string;
-  fields: Array<{ name: string; value: string; inline?: boolean }>;
-}> {
-  if (!markdown) return [];
-  const lines = markdown.split("\n");
-  const embeds: Array<{
-    title?: string;
-    description?: string;
-    fields: Array<{ name: string; value: string; inline?: boolean }>;
-  }> = [];
-  let i = 0;
-  while (i < lines.length) {
-    const block = parseTableBlock(lines, i);
-    if (block) {
-      // 生成 description：表头拼接（截断到 2048）
-      let description = block.headers.join(" | ");
-      if (description.length > EMBED_DESCRIPTION_LIMIT) {
-        description = description.slice(0, EMBED_DESCRIPTION_LIMIT - 3) + "...";
-      }
-      // 生成 fields：每行一个 field，name 为行号，value 为单元格拼接（截断）
-      const fields = block.rows.map((row, idx) => {
-        let value = row.join(" | ");
-        if (value.length > EMBED_FIELD_LIMIT) {
-          value = value.slice(0, EMBED_FIELD_LIMIT - 3) + "...";
-        }
-        return { name: `#${idx + 1}`, value, inline: false };
-      });
-      embeds.push({ description, fields });
-      i += 2 + block.rows.length;
-    } else {
-      i += 1;
-    }
-  }
-  return embeds;
 }
 
 // ---- 指令标签剥离（openclaw stripInlineDirectiveTagsForDelivery） ----
@@ -272,4 +222,44 @@ export function chunkDiscordText(text: string, maxChars: number = DISCORD_TEXT_C
   for (const p of paragraphs) push(p);
   if (current.trim().length) chunks.push(current);
   return chunks;
+}
+
+// ---- Embed 转换（Issue #59） ----
+
+/** Discord Embed field 结构。 */
+export interface DiscordEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+/** Discord Embed 结构（最小面）。 */
+export interface DiscordEmbed {
+  title?: string;
+  description?: string;
+  fields?: DiscordEmbedField[];
+}
+
+/**
+ * 将 markdown 表格转换为 Discord Embed fields（Issue #59）。
+ * 表头作为 field name，每行数据作为 field value（用换行分隔多行）。
+ * 若 markdown 中无表格，返回 null。
+ */
+export function convertMarkdownTableToEmbed(markdown: string): DiscordEmbed | null {
+  if (!markdown) return null;
+  const lines = markdown.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const block = parseTableBlock(lines, i);
+    if (block) {
+      const fields: DiscordEmbedField[] = [];
+      const columnCount = Math.max(block.headers.length, ...block.rows.map((r) => r.length));
+      for (let c = 0; c < columnCount; c++) {
+        const name = block.headers[c] ?? `Column ${c + 1}`;
+        const values = block.rows.map((r) => r[c] ?? "").filter((v) => v !== "");
+        fields.push({ name, value: values.join("\n") || "-", inline: true });
+      }
+      return { fields };
+    }
+  }
+  return null;
 }

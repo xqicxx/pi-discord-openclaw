@@ -120,7 +120,7 @@ export class DiscordRest {
   /** POST /channels/{id}/messages — 发送消息（返回 message id）。 */
   async createChannelMessage(
     channelId: Snowflake,
-    options: { content: string; embeds?: Array<{ title?: string; description?: string; fields?: Array<{ name: string; value: string; inline?: boolean }> }>; message_reference?: { message_id: string; fail_if_not_exists?: boolean } },
+    options: { content: string; message_reference?: { message_id: string; fail_if_not_exists?: boolean }; embeds?: Array<{ title?: string; description?: string; fields?: Array<{ name: string; value: string; inline?: boolean }> }> },
   ): Promise<DiscordCreatedMessage> {
     return this.request<DiscordCreatedMessage>("POST", `/channels/${channelId}/messages`, options);
   }
