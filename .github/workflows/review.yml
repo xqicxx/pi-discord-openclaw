@@ -36,8 +36,8 @@ jobs:
           comments = prinfo.get('comments', [])
           comments_text = '\n'.join(f"[{c['author']['login']}] {c['body'][:800]}" for c in comments[-6:])
           diff = gh('pr', 'diff', pr)
-          if len(diff) > 60000:
-              diff = diff[:30000] + "\n...(diff 过大，中间省略)...\n" + diff[-30000:]
+          if len(diff) > 200000:
+              diff = diff[:100000] + "\n...(diff 过大，中间省略)...\n" + diff[-100000:]
 
           prompt = f'''你是资深 code reviewer。审查这个 PR 的代码质量。
 
