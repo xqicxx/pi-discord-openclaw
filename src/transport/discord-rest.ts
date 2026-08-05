@@ -173,6 +173,24 @@ export class DiscordRest {
     return this.request<DiscordApplicationCommand>("POST", `/applications/${applicationId}/commands`, command);
   }
 
+  /** PATCH /applications/{id}/commands/{cid} — 更新单个全局命令（不消耗 200/天 create 额度）。 */
+  async editApplicationCommand(
+    applicationId: Snowflake,
+    commandId: Snowflake,
+    command: { name: string; description: string; options?: unknown[] },
+  ): Promise<DiscordApplicationCommand> {
+    return this.request<DiscordApplicationCommand>(
+      "PATCH",
+      `/applications/${applicationId}/commands/${commandId}`,
+      command,
+    );
+  }
+
+  /** DELETE /applications/{id}/commands/{cid} — 删除多余的全局命令。 */
+  async deleteApplicationCommand(applicationId: Snowflake, commandId: Snowflake): Promise<void> {
+    return this.request<void>("DELETE", `/applications/${applicationId}/commands/${commandId}`);
+  }
+
   /** GET /applications/{id}/guilds/{gid}/commands — 现有 guild 命令（注册去重对比）。 */
   async listGuildApplicationCommands(
     applicationId: Snowflake,
