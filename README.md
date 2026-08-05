@@ -1,10 +1,6 @@
 # pi-discord-openclaw
 
 <p align="center">
-  <img src="screenshot.png" alt="pi-discord-openclaw — OpenClaw-style streaming for Pi on Discord" width="720" />
-</p>
-
-<p align="center">
   <strong>Recreate the OpenClaw streaming experience for the <a href="https://github.com/xqicxx/pi">Pi coding agent</a> on Discord.</strong><br/>
   🧠 Separate italic reasoning · 🔧 Live tool progress · 📝 Typewriter-style streamed answers · ⏭️ Debounced follow-ups · ⏳→👀→🧠 Status emoji state machine
 </p>
