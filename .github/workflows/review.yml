@@ -36,8 +36,8 @@ jobs:
           comments = prinfo.get('comments', [])
           comments_text = '\n'.join(f"[{c['author']['login']}] {c['body'][:800]}" for c in comments[-6:])
           diff = gh('pr', 'diff', pr)
-          if len(diff) > 200000:
-              diff = diff[:100000] + "\n...(diff 过大，中间省略)...\n" + diff[-100000:]
+          if len(diff) > 500000:
+              diff = diff[:250000] + "\n...(diff 过大，中间省略)...\n" + diff[-250000:]
 
           prompt = f'''你是资深 code reviewer。审查这个 PR 的代码质量。
 
@@ -56,6 +56,11 @@ jobs:
           审查维度：正确性、安全性、回归风险、测试覆盖、风格一致性。
           输出 JSON（不要其他文字，保持精简，blockers 最多 5 条）：
           {{"verdict": "approve或changes", "summary": "2-3 句中文总结", "blockers": ["必须修复的问题（verdict=changes 时）"], "suggestions": ["可选建议"]}}
+          判定原则：
+          - 只有阻断性问题（真实 bug、安全漏洞、明显破坏性变更）才判 changes。
+          - 改进建议、风格问题、架构偏好、可选增强一律不阻塞，放入 suggestions。
+          - 维护者已在评论中回应的质疑，视为已解决，不要重复提出。
+          - 不要臆测代码缺失——diff 中确实存在的文件就是存在。
           只报告真实问题，不吹毛求疵。'''
           body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
                   'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 16384}}
