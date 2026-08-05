@@ -461,6 +461,30 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
       category: "options",
       tier: "standard",
     }),
+    // 笔记 26：/todos 本地实现（方案二——TUI 命令远程不可用，桥接层直接读写存储）
+    defineChatCommand({
+      key: "todos",
+      nativeName: "todos",
+      description: "List, add, complete or manage todos (works from Discord).",
+      category: "management",
+      tier: "standard",
+      args: [
+        {
+          name: "action",
+          description: "list / add / done / open / show / delete",
+          type: "string",
+          required: false,
+          choices: ["list", "add", "done", "open", "show", "delete"],
+        },
+        {
+          name: "args",
+          description: "Title (add) or todo id/index (done/open/show/delete)",
+          type: "string",
+          required: false,
+          captureRemaining: true,
+        },
+      ],
+    }),
     defineChatCommand({
       key: "export",
       nativeName: "export",

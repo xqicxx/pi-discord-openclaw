@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.13: /todos 本地实现（方案二，笔记 26）
+
+- `Todos Bridge`: pi 的 /todos 是 TUI 交互界面（依赖 UI mode），Discord 远程调用无法显示 → 新增 src/commands/todos.ts 在桥接层直接读写 .pi/todos/<id>.md（JSON front matter + markdown body，与 pi-agent-extensions/todos 同一存储格式，双向兼容）。支持 /todos list/add <标题>/done <序号|id>/open <序号|id>/show <序号|id>/delete <序号|id>；id 支持 TODO-xxxx 与裸 hex；写前检查 .lock（TUI 正在编辑时拒绝，防覆盖）。todo 目录 = PI_TODO_PATH 或 <cwd>/.pi/todos。
+- `Tests`: 新增 test/todos.test.mjs（临时目录隔离：add/list/done/show/delete/存储格式兼容/无效引用，14 断言）。Impact: 全量 16 测试文件全绿，typecheck 通过。
+
 ## 0.1.12: /skill 二级分类（subcommand groups，笔记 25 续）
 
 - `Skill Category Groups`: 55 个 skill 按类别分组成 subcommand groups（/skill video hyperframes 两级选择）——Discord 每个命令 options 上限 25（含 subcommand/group），单层 55 个子命令 PUT 被拒（BASE_TYPE_MAX_LENGTH: Must be 25 or fewer）。分组：video 19 / dev 14 / fabric 12 / tools 10（未命中名单兜底），各 ≤25。新增 buildSkillGroups（SKILL_CATEGORY_NAMES 名单 + tools 兜底 + 每组长上限 25）。

@@ -13,6 +13,7 @@ import {
   type CommandResult,
 } from "./registry.ts";
 import type { PiRpcBridge } from "../rpc/rpc-bridge.ts";
+import { todosAdd, todosDelete, todosList, todosSetStatus, todosShow } from "./todos.ts";
 
 /** 执行依赖：pi API + 最近一次事件 ctx 捕获器（index.ts 注入）+ RPC 只读桥。 */
 export interface CommandHandlerDeps {
@@ -265,6 +266,33 @@ export async function executeCommand(
       if (!ctx?.listThinkingLevels) return reply("该命令需要模型能力，请在终端执行");
       const levels = ctx.listThinkingLevels();
       return reply(`🧠 **可用思考级别**：${levels.join(", ")}`, false);
+    }
+
+    // 笔记 26：/todos 本地实现（方案二——TUI 命令远程不可用，桥接层直接读写 .pi/todos）
+    case "todos": {
+      const action = (values.action as string | undefined)?.trim().toLowerCase() ?? "list";
+      const rest = (values.args as string | undefined)?.trim() ?? "";
+      try {
+        const cwd = deps.cwd ?? process.cwd();
+        switch (action) {
+          case "list":
+            return reply(await todosList(cwd), false);
+          case "add":
+            return reply(await todosAdd(cwd, rest), false);
+          case "done":
+            return reply(await todosSetStatus(cwd, rest, "closed"), false);
+          case "open":
+            return reply(await todosSetStatus(cwd, rest, "open"), false);
+          case "show":
+            return reply(await todosShow(cwd, rest), false);
+          case "delete":
+            return reply(await todosDelete(cwd, rest), false);
+          default:
+            return reply(`未知动作：${action}（可用 list/add/done/open/show/delete）`);
+        }
+      } catch (err) {
+        return reply(`❌ /todos ${action} 执行失败：${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     case "export": {
