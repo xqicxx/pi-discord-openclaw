@@ -37,6 +37,7 @@ import {
 } from "./src/feedback/ack-reactions.ts";
 import {
   convertMarkdownTables,
+  convertTextWithTables,
   stripInlineDirectiveTagsForDelivery,
 } from "./src/dispatch/markdown-tables.ts";
 import { DiscordGateway } from "./src/transport/discord-gateway.ts";
@@ -307,8 +308,9 @@ export default function (pi: ExtensionAPI) {
       if (!sent.id) throw new Error(`${TAG} sendMessage: no message id`);
       return sent.id;
     },
-    editMessage: async (chatId, messageId, text) => {
-      await rest.editChannelMessage(chatId, messageId, text);
+    editMessage: async (chatId, messageId, text, embeds) => {
+      // issue 59：透传 embeds，否则流式编辑 PATCH 会清掉已发送的 Embed 表格
+      await rest.editChannelMessage(chatId, messageId, text, embeds);
     },
     deleteMessage: async (chatId, messageId) => {
       await rest.deleteChannelMessage(chatId, messageId);
@@ -336,8 +338,18 @@ export default function (pi: ExtensionAPI) {
       toolProgressLines: cfg.streaming.toolProgress,
       // 笔记 24：最终回答投递前格式化（表格 → 对齐 ASCII 代码块 + 指令标签剥离）
       // 笔记 26：区分靠 openclaw 折叠摘要（progress 方块变 -# 小字摘要），回答不加分隔线
-      formatAnswerText: (text) =>
-        convertMarkdownTables(stripInlineDirectiveTagsForDelivery(text).text, "code"),
+      // issue 59：tableMode="embed" 时文本中的表格全部 → Discord Embed fields，
+      // 非表格内容保留在 content；超出 Embed 限制自动回退 ASCII 代码块（不丢内容）
+      formatAnswerText: (text) => {
+        const stripped = stripInlineDirectiveTagsForDelivery(text).text;
+        const mode = cfg.tableMode ?? "code";
+        if (mode === "embed") {
+          const converted = convertTextWithTables(stripped);
+          if (converted) return { content: converted.content, embeds: converted.embeds };
+          return convertMarkdownTables(stripped, "code");
+        }
+        return convertMarkdownTables(stripped, mode === "off" ? "off" : "code");
+      },
     },
   });
 
@@ -625,9 +637,21 @@ export default function (pi: ExtensionAPI) {
   });
 
   bridge.onUserInput = async (text) => {
-    // 笔记 29：用 steer 替代 followUp——新消息在当前工具调用结束后立即处理，
-    // 不再排队等旧任务全部完成（旧任务卡住时 bot 不再「没动静」）
+    // 笔记 29/30：新消息经桥排队后提交给 agent（steer 在当前工具调用后立即处理）
     pi.sendUserMessage(text, { deliverAs: "steer" });
+  };
+  // 笔记 30：消息排队时给用户明确提示（👀=queued 语义的可见化，避免误解为「同时在处理」）
+  let queueNoticePending = false;
+  bridge.onQueued = async (chatId) => {
+    if (queueNoticePending || !chatId) return;
+    queueNoticePending = true;
+    try {
+      await rest.createChannelMessage(chatId, {
+        content: "⏳ 排队中：上一条处理完自动继续…",
+      });
+    } catch {
+      // 忽略发送失败
+    }
   };
   // 笔记 28：watchdog/触发词中断时真正停止 pi agent（否则任务还在后台跑）
   bridge.onAbort = () => {
@@ -693,6 +717,8 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
+    // 笔记 30：新一轮开始，允许下一条排队消息再次提示
+    queueNoticePending = false;
     void statusReactions?.setThinking();
   });
   pi.on("message_update", (event, ctx) => {

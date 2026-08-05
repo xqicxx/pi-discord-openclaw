@@ -37,8 +37,9 @@ export interface OpenclawBridgeConfig {
   thinkingEnabled?: boolean;
   /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
   receiptSummary?: boolean;
-  /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。 */
-  formatAnswerText?: (text: string) => string;
+  /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。
+   *  可返回 {content, embeds} 以支持 Discord Embed 表格投递（issue 59）。 */
+  formatAnswerText?: (text: string) => string | { content: string; embeds?: unknown[] };
   /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），超时 abort 当前 turn。 */
   turnWatchdogMs?: number;
   /** 连续工具超时阈值（默认 3 次），超过则强制 abort turn。 */
@@ -47,7 +48,8 @@ export interface OpenclawBridgeConfig {
 
 export interface DiscordDelivery {
   sendMessage: (chatId: string, text: string) => Promise<string>;
-  editMessage: (chatId: string, messageId: string, text: string) => Promise<void>;
+  /** issue 59：编辑透传 embeds。 */
+  editMessage: (chatId: string, messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (chatId: string, messageId: string) => Promise<void>;
   sendChatAction: (chatId: string, action: "typing") => Promise<void>;
 }
@@ -81,7 +83,7 @@ export class TurnManager {
 
     const transport: DraftTransport = {
       sendMessage: (text) => params.delivery.sendMessage(params.chatId, text),
-      editMessage: (messageId, text) => params.delivery.editMessage(params.chatId, messageId, text),
+      editMessage: (messageId, text, embeds) => params.delivery.editMessage(params.chatId, messageId, text, embeds),
       deleteMessage: (messageId) => params.delivery.deleteMessage(params.chatId, messageId),
       sendChatAction: (action) => params.delivery.sendChatAction(params.chatId, action),
     };
@@ -196,6 +198,10 @@ export class OpenclawBridge {
   private watchdogTimer: ReturnType<typeof setTimeout> | undefined;
   private lastActivityAt = 0;
   private consecutiveToolTimeouts = 0;
+  /** 笔记 30：turn 活跃时收到的新消息排队（对齐 openclaw 默认 steer/followup，
+   *  不中断当前 agent；turn 结束后自动处理）。 */
+  private pendingInputs: string[] = [];
+  private pendingChatId: string | undefined;
 
   constructor(params: { delivery: DiscordDelivery; config: OpenclawBridgeConfig }) {
     this.delivery = params.delivery;
@@ -204,15 +210,19 @@ export class OpenclawBridge {
       debounceMs: params.config.debounceMs,
       onFlush: async (entries) => {
         const text = entries.map((e) => e.text).join("\n");
-        // 笔记 29：turn 活跃时收到新消息 → 先中断当前 agent（onInterrupt），
-        // 再处理新消息（对齐 openclaw resolveActiveRunQueueAction 默认 run-now；
-        // 旧任务不再阻塞新消息，避免「bot 没动静」）
+        // 笔记 30：对齐 openclaw 默认队列语义（steer/followup）——
+        // turn 活跃时新消息不中断 agent，排队等当前 turn 结束再处理；
+        // 卡死兜底仍由 watchdog（90s 无活动 abort）保证「bot 不没动静」。
         if (this.turn && !this.turn.isSuperseded()) {
+          this.pendingInputs.push(text);
+          this.pendingChatId = entries[0]?.key ?? this.pendingChatId;
+          // 笔记 30：通知宿主「这条在排队」（👀=queued 语义的可见化）
           try {
-            this.onInterrupt?.();
+            await this.onQueued?.(entries[0]?.key ?? "");
           } catch {
-            // 忽略中断失败
+            // 忽略通知失败
           }
+          return;
         }
         await this.onUserInput?.(text);
       },
@@ -221,6 +231,8 @@ export class OpenclawBridge {
 
   /** 用户消息注入回调（由宿主设置：pi / omp）。 */
   onUserInput?: (text: string) => Promise<void>;
+  /** 笔记 30：消息排队通知（turn 活跃时收到新消息）。宿主可提示「排队中」。 */
+  onQueued?: (chatId: string) => void | Promise<void>;
   /** 宿主中断回调（笔记 28）：abortTurn/abortCurrentTurn 时真正中断 agent（pi ctx.abort()），
    *  否则只清 bridge 状态，agent 还在跑（「超时但没停止」）。 */
   onAbort?: () => void;
@@ -243,6 +255,10 @@ export class OpenclawBridge {
     // 笔记 05: isDispatchSuperseded — 新消息取代旧 turn
     if (this.turn && !this.turn.isSuperseded()) {
       this.turn.supersede();
+      // 笔记 30：agent 异常中断（agent_end 不触发，如重启/内部错误）时，
+      // 旧 turn 的 progress 方块会永久残留——这里兜底清理。
+      // 正常路径下旧 turn 已 endTurn（turn 已置 undefined），不会重复执行。
+      void this.turn.endTurn().catch(() => {});
     }
     this.turn = new TurnManager({
       chatId: params.chatId,
@@ -273,13 +289,22 @@ export class OpenclawBridge {
     return consumed;
   }
 
-  /** agent-end：收尾当前 turn。 */
+  /** agent-end：收尾当前 turn，随后处理排队的新消息（笔记 30）。 */
   async endTurn(): Promise<void> {
     this.clearWatchdog();
     if (this.turn) {
       await this.turn.endTurn();
       this.turn = undefined;
     }
+    await this.drainPending();
+  }
+
+  /** 笔记 30：turn 结束后把排队消息合并提交给 agent。 */
+  private async drainPending(): Promise<void> {
+    if (this.pendingInputs.length === 0) return;
+    const texts = this.pendingInputs.splice(0);
+    this.pendingChatId = undefined;
+    await this.onUserInput?.(texts.join("\n"));
   }
 
   /** 笔记 27：turn 级 watchdog——连续无活动超时 abort。 */
@@ -325,6 +350,8 @@ export class OpenclawBridge {
     } catch {
       // 忽略清理失败
     }
+    // 笔记 30：abort 后仍处理排队的新消息（用户意图不丢）
+    await this.drainPending();
   }
 
   /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。 */
