@@ -84,3 +84,4 @@ npm run typecheck # tsc 0 error
 - 只处理配置允许的频道；`ignoreBots` 默认忽略其他 bot 消息
 - 不执行终端控制；只做消息流式与回复（与 OpenClaw 同理念）
 - 2000 字符硬上限：超长文本按块拆分（默认 1900 留余量）
+test line for gemini review verification
