@@ -34,8 +34,8 @@ jobs:
 
           prinfo = json.loads(gh('pr', 'view', pr, '--json', 'title,body,headRefName,baseRefName'))
           diff = gh('pr', 'diff', pr)
-          if len(diff) > 40000:
-              diff = diff[:40000] + "\n...(diff 过大已截断)"
+          if len(diff) > 60000:
+              diff = diff[:30000] + "\n...(diff 过大，中间省略)...\n" + diff[-30000:]
 
           prompt = f'''你是资深 code reviewer。审查这个 PR 的代码质量。
 
