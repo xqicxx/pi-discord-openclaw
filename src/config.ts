@@ -53,6 +53,8 @@ export interface OpenclawStyleConfig {
   };
   /** 笔记 27：turn 级 watchdog——连续无活动超时（ms），默认 90s。 */
   turnWatchdogMs?: number;
+  /** 笔记 36：上下文使用率阈值（0-1），超过时提醒用户 /compact（默认 0.7）。 */
+  contextHighUsageThreshold?: number;
   /** 表格渲染模式：embed | code | off（默认 code 保持现状）。 */
   tableMode?: "embed" | "code" | "off";
 }
@@ -80,6 +82,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
   statusReactions: { enabled: true, removeAckAfterReply: false },
   // 笔记 27：默认 90s 无活动即 abort（防止长 sleep 轮询卡死 turn）
   turnWatchdogMs: 90000,
+  // 笔记 36：上下文使用率 >70% 时提醒用户 /compact（避免膨胀导致延迟）
+  contextHighUsageThreshold: 0.7,
   tableMode: "code",
 };
 
