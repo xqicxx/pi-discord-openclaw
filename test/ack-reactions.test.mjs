@@ -263,5 +263,35 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(calls.join(',') === 'PUT,DELETE', 'adapter 绑定 channel/message');
 }
 
+
+// 13. issue #104：clear 之后 setDone 仍加终态 ✓（agent_start 升级清旧 controller →
+// agent_end 快照 setDone 的场景——finishWithEmoji 不检查 finished，必须能补上 ✓）
+{
+  const set = []; const removed = [];
+  const adapter = { setReaction: async (e) => set.push(e), removeReaction: async (e) => removed.push(e) };
+  const ctl = createStatusReactionController({ adapter });
+  ctl.setQueued();                 // ⏳
+  ctl.setWorking();                // 👀（移除 ⏳ 等链上操作）
+  await ctl.clear();               // agent_start 升级：清空旧 controller（finished=true）
+  await ctl.setDone();             // agent_end：快照后的 setDone（旧实现会被 clear 影响）
+  assert(set.includes('✓') === true, 'clear 后 setDone 仍加 ✓（终态不丢）');
+  assert(removed.includes('⏳') === true && removed.includes('👀') === true, 'clear 清掉了中间表情');
+  assert(set.filter((e) => e === '✓').length === 1, '✓ 只加一次');
+}
+
+// 14. issue #104：换绑后 setDone 作用于旧 controller（快照语义）——旧消息有 ✓、新消息不受影响
+{
+  const setA = []; const removedA = [];
+  const setB = []; const removedB = [];
+  const ctlA = createStatusReactionController({ adapter: { setReaction: async (e) => setA.push(e), removeReaction: async (e) => removedA.push(e) } });
+  const ctlB = createStatusReactionController({ adapter: { setReaction: async (e) => setB.push(e), removeReaction: async (e) => removedB.push(e) } });
+  ctlA.setWorking();               // 旧消息处理中 👀
+  await ctlA.clear();              // agent_start(B) 升级：清旧 controller
+  ctlB.setWorking();               // 新消息开始 👀
+  await ctlA.setDone();            // agent_end(A) 快照 setDone → 旧 controller
+  assert(setA.includes('✓') === true, '旧 controller setDone 后旧消息有 ✓');
+  assert(setB.includes('✓') === false, '新 controller 不受影响（✓ 不会误加到新消息）');
+}
+
 console.log(`\nack-reactions tests: ${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);
