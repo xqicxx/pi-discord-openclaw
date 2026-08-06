@@ -237,7 +237,10 @@ export class DraftStream {
     // flush：streamMessageId 尚未赋值 → 重复发送同一条回复）。飞行中直接返回，
     // 新数据已累积在 pendingText，飞行结束（finally）会重新调度。
     if (this.flushing) return;
-    if (this.stopped || !this.pendingText) return;
+    // issue 修复：flush 失败重试时 stop() 已设置 stopped，但重试的 flush 不应被拦截——
+    // 否则最终回答永久丢失（停留在中间态）。stopped 只阻止新 update/updateDelta，
+    // 已排队的 flush 仍应完成投递。
+    if (this.stopped && !this.pendingText) return;
     if (this.suspendedUntilMs > Date.now()) {
       this.scheduleFlush();
       return;
