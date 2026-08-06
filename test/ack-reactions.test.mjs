@@ -134,7 +134,64 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(set.join(',') === '🙋,🎉', 'emojis 覆盖生效');
 }
 
-// 10. createDiscordReactionAdapter 绑定消息
+// 10. removeThinkingNow：立即移除 🧠（跳过防抖）；removeThinking 防抖后移除
+{
+  const set = [], removed = [];
+  const ctl = createStatusReactionController({
+    adapter: { setReaction: async (e) => set.push(e), removeReaction: async (e) => removed.push(e) },
+    timing: { debounceMs: 5 },
+  });
+  ctl.setThinking();
+  await wait(20);
+  assert(set.includes('🧠'), 'setThinking 加 🧠');
+  ctl.removeThinkingNow();
+  await wait(10);
+  assert(removed.includes('🧠'), 'removeThinkingNow 立即移除 🧠（无防抖延迟）');
+  const removedAt = removed.length;
+  await wait(1600);
+  assert(removed.length === removedAt, 'removeThinkingNow 后无重复移除');
+}
+{
+  const removed = [];
+  const ctl = createStatusReactionController({
+    adapter: { setReaction: async () => {}, removeReaction: async (e) => removed.push(e) },
+    timing: { debounceMs: 5 },
+  });
+  ctl.setThinking();
+  ctl.removeThinking();
+  await wait(50);
+  assert(!removed.includes('🧠'), 'removeThinking 防抖窗口内不移除');
+  await wait(1600);
+  assert(removed.includes('🧠'), 'removeThinking 防抖后移除 🧠');
+}
+
+// 11. setThinking(countsAsActivity=false)：思考不可见时不重置 stall → ⏳⚠️ 照常出现
+{
+  const set = [];
+  const ctl = createStatusReactionController({
+    adapter: { setReaction: async (e) => set.push(e), removeReaction: async () => {} },
+    timing: { debounceMs: 5, stallSoftMs: 30, stallHardMs: 60 },
+  });
+  ctl.setWorking();
+  for (let i = 0; i < 5; i++) { ctl.setThinking(false); await wait(10); } // 高频「不可见思考」
+  await wait(90);
+  assert(set.includes('⏳') && set.includes('⚠️'), `思考不可见时 stall 照常触发：${set.join(',')}`);
+}
+{
+  // 对照组：思考可见（默认）→ setThinking 重置 stall → 距重置 < stallSoftMs 时 ⏳ 不出现
+  const set = [];
+  const ctl = createStatusReactionController({
+    adapter: { setReaction: async (e) => set.push(e), removeReaction: async () => {} },
+    timing: { debounceMs: 5, stallSoftMs: 100, stallHardMs: 200 },
+  });
+  ctl.setWorking();
+  await wait(60); // 距 setWorking 60ms（<100，未触发）
+  ctl.setThinking(); // 可见思考：重置 stall
+  await wait(80); // 距重置 80ms（<100）→ ⏳ 不应出现；若未重置则距 setWorking 140ms > 100 → ⏳ 已出现
+  assert(!set.includes('⏳'), `思考可见时 setThinking 重置 stall：${set.join(',')}`);
+}
+
+// 12. createDiscordReactionAdapter 绑定消息
 {
   const calls = [];
   const rest = new DiscordRest({ token: 't', fetch: async (url, init) => { calls.push(init.method); return new Response(null, { status: 204 }); }});

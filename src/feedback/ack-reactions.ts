@@ -48,20 +48,30 @@ const DEPLOY_TOOL_TOKENS = ["fastlane", "deploy", "upload", "testflight", "ship"
 const BUILD_TOOL_TOKENS = ["build", "compile", "xcode", "swift", "gradle", "cargo", "make", "cmake", "webpack", "vite", "tsc", "lint"];
 const CONCIERGE_TOOL_TOKENS = ["navigate", "click", "fill", "screenshot", "scroll", "page", "form", "puppeteer", "playwright", "selenium", "chromedp"];
 
+/** 联网搜索特征（含 fabric_exec 内部调用 web 的 args 信号）。 */
+const WEB_ARGS_RE =
+  /web_search|web-search|web_fetch|web-fetch|agent_browser|agent[-_]reach|duckduckgo|bing|google\.com|search_web|web_search_tool/gi;
+
 /**
  * 工具名 → 分类表情（openclaw resolveToolEmoji）。
  * 优先级 deploy > build > concierge > web > coding > tool；token 包含匹配。
  */
-export function resolveToolEmoji(toolName?: string, emojis: Partial<Record<StatusEmojiKey, string>> = {}): string {
+export function resolveToolEmoji(
+  toolName?: string,
+  emojis: Partial<Record<StatusEmojiKey, string>> = {},
+  args?: unknown,
+): string {
   const normalized = (toolName ?? "").trim().toLowerCase();
-  if (!normalized) return emojis.tool ?? STATUS_EMOJIS.tool;
+  // 笔记 30：联网搜索常在 fabric_exec 内部发生——args 里有 web 信号也算 🌐
+  const argsWeb = args !== undefined && WEB_ARGS_RE.test(JSON.stringify(args).slice(0, 2000));
+  if (!normalized && !argsWeb) return emojis.tool ?? STATUS_EMOJIS.tool;
   const category: StatusEmojiKey = DEPLOY_TOOL_TOKENS.some((t) => normalized.includes(t))
     ? "deploy"
     : BUILD_TOOL_TOKENS.some((t) => normalized.includes(t))
       ? "build"
       : CONCIERGE_TOOL_TOKENS.some((t) => normalized.includes(t))
         ? "concierge"
-        : WEB_TOOL_TOKENS.some((t) => normalized.includes(t))
+        : argsWeb || WEB_TOOL_TOKENS.some((t) => normalized.includes(t))
           ? "web"
           : CODING_TOOL_TOKENS.some((t) => normalized.includes(t))
             ? "coding"
@@ -110,8 +120,14 @@ export interface StatusReactionController {
   setQueued: () => void;
   /** 笔记 30：处理中（agent_start 后、thinking 前）——👀 表示真正开工。 */
   setWorking: () => void;
-  setThinking: () => void;
-  setTool: (toolName?: string) => void;
+  /** 笔记 31：countsAsActivity=false 时不重置 stall 计时（思考对用户不可见时，
+   *  thinking_delta 不算「可见活动」——10s ⏳ / 30s ⚠️ 照常出现，用户能分辨死活）。 */
+  setThinking: (countsAsActivity?: boolean) => void;
+  /** 笔记 30：思考结束移除 🧠（不常驻无意义标签）。 */
+  removeThinking: () => void;
+  /** 笔记 31：立即移除 🧠（无实质思考内容时，跳过 1.5s 防抖）。 */
+  removeThinkingNow: () => void;
+  setTool: (toolName?: string, args?: unknown) => void;
   setCompacting: () => void;
   cancelPending: () => void;
   setDone: () => Promise<void>;
@@ -145,6 +161,8 @@ export function createStatusReactionController(params: StatusReactionControllerO
 
   let currentEmoji = "";
   let pendingEmoji = "";
+  /** 笔记 30：🧠 防抖移除 timer（多段思考时不闪烁）。 */
+  let thinkingRemoveTimer: ReturnType<typeof setTimeout> | undefined;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let stallSoftTimer: ReturnType<typeof setTimeout> | undefined;
   let stallHardTimer: ReturnType<typeof setTimeout> | undefined;
@@ -161,6 +179,7 @@ export function createStatusReactionController(params: StatusReactionControllerO
     if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
     if (stallSoftTimer) { clearTimeout(stallSoftTimer); stallSoftTimer = undefined; }
     if (stallHardTimer) { clearTimeout(stallHardTimer); stallHardTimer = undefined; }
+    if (thinkingRemoveTimer) { clearTimeout(thinkingRemoveTimer); thinkingRemoveTimer = undefined; }
   }
 
   function clearDebounceTimer(): void {
@@ -237,17 +256,58 @@ export function createStatusReactionController(params: StatusReactionControllerO
     scheduleEmoji(emojis.queued, { immediate: true });
   }
 
-  /** 笔记 30：处理中状态（👀）——与 queued(⏳) 区分，用户能看到「开始干活了」。 */
+  /** 移除指定表情（如已添加）。 */
+  async function removeEmoji(emoji: string): Promise<void> {
+    if (!adapter.removeReaction || !activeEmojis.has(emoji)) return;
+    try {
+      await adapter.removeReaction(emoji);
+    } catch (err) {
+      if (onError) onError(err);
+    } finally {
+      activeEmojis.delete(emoji);
+    }
+  }
+
+  /** 笔记 30：处理中状态（👀）——开工即移除排队 ⏳（排队结束，不常驻），再显示 👀。
+   *  remove 与 add 都走 enqueue 串行链，顺序稳定（切换流畅）。 */
   function setWorking(): void {
+    enqueue(() => removeEmoji(emojis.queued));
     scheduleEmoji(emojis.working, { immediate: true });
   }
 
-  function setThinking(): void {
-    scheduleEmoji(emojis.thinking);
+  /** 笔记 30：思考结束 → 1.5s 防抖后移除 🧠（多段思考时持续显示，不闪烁）。 */
+  function removeThinking(): void {
+    if (thinkingRemoveTimer) clearTimeout(thinkingRemoveTimer);
+    thinkingRemoveTimer = setTimeout(() => {
+      thinkingRemoveTimer = undefined;
+      enqueue(() => removeEmoji(emojis.thinking));
+    }, 1_500);
   }
 
-  function setTool(toolName?: string): void {
-    scheduleEmoji(resolveToolEmoji(toolName, emojis));
+  /** 笔记 31：立即移除 🧠（无实质思考内容时——thinking 总长度低于阈值，模型只是形式化思考）。
+   *  与 removeThinking 的区别：跳过 1.5s 防抖，「没思考却有思考标签」的观感立即消失。 */
+  function removeThinkingNow(): void {
+    if (thinkingRemoveTimer) {
+      clearTimeout(thinkingRemoveTimer);
+      thinkingRemoveTimer = undefined;
+    }
+    enqueue(() => removeEmoji(emojis.thinking));
+  }
+
+  function setThinking(countsAsActivity = true): void {
+    // 笔记 30：新思考段到来 → 取消待移除（防止闪烁）
+    if (thinkingRemoveTimer) {
+      clearTimeout(thinkingRemoveTimer);
+      thinkingRemoveTimer = undefined;
+    }
+    // immediate——思考标签即时出现（applyEmoji 去重，无重复 API）
+    // 笔记 31：思考不可见（思考行被关闭）时 skipStallReset——thinking 不算可见活动，
+    // 否则 stall 永远被高频 thinking_delta 重置，「分不清死活」。
+    scheduleEmoji(emojis.thinking, { immediate: true, skipStallReset: !countsAsActivity });
+  }
+
+  function setTool(toolName?: string, args?: unknown): void {
+    scheduleEmoji(resolveToolEmoji(toolName, emojis, args), { immediate: true });
   }
 
   function setCompacting(): void {
@@ -315,6 +375,8 @@ export function createStatusReactionController(params: StatusReactionControllerO
     setQueued,
     setWorking,
     setThinking,
+    removeThinking,
+    removeThinkingNow,
     setTool,
     setCompacting,
     cancelPending,

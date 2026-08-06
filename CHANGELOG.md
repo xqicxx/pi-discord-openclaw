@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.18: 表情生命周期重构 + 思考标签真实性（openclaw 调研笔记 31）
+
+- `Bugfix`: **表情错位/残留根因**——旧实现每次收到消息都重建 `statusReactions` controller 并覆盖旧引用：bot 思考/操作中用户新发消息时，全局 thinking/tool 事件会把 🧠/🛠️ 错挂到新消息（「没思考却有思考标签」），旧消息的 controller 被丢弃后 ⏳👀🧠🛠️ 永久残留。
+- `Lifecycle`: 重构为 `activeReactions`（当前 turn 消息的状态机）+ `queuedReactions`（turn 活跃时的新消息只标 ⏳=排队，不进状态机）——对齐 openclaw 每条消息独立 reaction runtime 的生命周期；agent_start 时队首升级为 active（⏳→👀），agent_end/fatal/abort 终态必清理，turn 消息收尾后释放 active。
+- `Thinking Truth`: message_update 空 thinking delta 不触发 🧠；thinking_end 总内容 < 20 字符（模型形式化思考）→ `removeThinkingNow()` 立即移除 🧠（新增方法，跳过 1.5s 防抖）——「没思考却有思考标签」的内容侧修复。
+- `Uncouple`: 思维行字符预算独立为 `streaming.thinkingMaxChars`（默认 120，openclaw progress.maxLineChars），不再复用 maxLineChars——配置 40 时思考行被切碎（观感生硬）的问题消除。
+- `Research`: docs/openclaw-research/31-status-reactions-lifecycle.md — openclaw 原版调研（每条消息独立 controller、finish 必 restoreInitial/setDone、中间表情 debounce 700ms、新版本 Discord 用 embed + accentColor + components 提升视觉）。
+- `Lifecycle`: 补充「存活信号」三件套——
+  - `Stall Truth`: `setThinking(countsAsActivity?)`——思考对用户不可见（streaming.thinking:false 或 reasoning.enabled:false）时 thinking_delta 不再重置 stall 计时（否则被高频 delta 永远重置），10s ⏳ / 30s ⚠️ 照常出现，用户能分辨「还在跑 vs 卡死」。
+  - `Typing Heartbeat`: 思考期间持续发 typing（即使思考行被关闭）——「还活着」的可见信号（节流 10s 复用）。
+  - `Restart Notice`: 停机时（SIGTERM/SIGHUP，覆盖 tmux kill-server 场景）尽力发「🔄 服务重启中…」；启动时总是发「✅ 服务已重新上线」（异常退出则提示任务中断）——更新代码重启后 Discord 那边不再「分不清死活」。
+- `Tests`: ack-reactions.test 新增 removeThinkingNow（立即移除/无重复移除）与 removeThinking（防抖窗口内不移除/防抖后移除）用例 + stall 可见性联动（思考不可见时 ⏳⚠️ 照常触发 / 可见时重置）。Impact: 全量 18 测试文件，失败集与改动前一致（2 个既有 flaky/遗留用例），typecheck 无新增错误。
+
 ## 0.1.17: 修复长回复分块切断代码围栏（Issue #4）
 
 - `Chunk Fence-Aware`: `chunkDiscordText`（src/dispatch/markdown-tables.ts）升级为真正的围栏感知——围栏块（``` / ~~~ 配对）作为最小不可分单元整体保留，表格转换器输出的 ```+ASCII表格+``` 永远不会被切断；非围栏内容按行边界分块；段落超限时内部行切（行完整优先），超长行才硬切 fallback。未闭合围栏也整体保留（避免孤立围栏）。

@@ -37,8 +37,11 @@ export interface OpenclawBridgeConfig {
   thinkingEnabled?: boolean;
   /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
   receiptSummary?: boolean;
-  /** 笔记 30：思维行字符预算（openclaw progress.maxLineChars，默认 120，越小越清爽）。 */
+  /** 笔记 30：思维行字符预算（openclaw progress.maxLineChars，默认 120，越小越清爽）。
+   *  笔记 31：已独立为 thinkingMaxChars（默认 120）；保留 maxLineChars 兼容旧配置。 */
   maxLineChars?: number;
+  /** 笔记 31：思维行字符预算（openclaw progress.maxLineChars 默认 120；独立于 maxLineChars）。 */
+  thinkingMaxChars?: number;
   /** 笔记 30：progress 方块最大行数（思考+工具，默认 8，越小越紧凑）。 */
   maxProgressLines?: number;
   /** 笔记 24：最终回答投递前格式化钩子（convertMarkdownTables + stripInlineDirectiveTags）。
@@ -122,7 +125,7 @@ export class TurnManager {
         maxLines: params.config.maxProgressLines ?? 8,
         thinking: params.config.thinkingEnabled ?? true,
         receipt: params.config.receiptSummary ?? false,
-        thinkingMaxChars: params.config.maxLineChars ?? 120,
+        thinkingMaxChars: params.config.thinkingMaxChars ?? 120,
       },
       this.progressDraft,
     );
@@ -331,16 +334,14 @@ export class OpenclawBridge {
       const idleMs = Date.now() - this.lastActivityAt;
       if (idleMs >= timeoutMs && this.turn && !this.turn.isSuperseded()) {
         if (!this.stallWarned) {
-          // 笔记 30：第一次超时 → 软提示，不打断（长工具/长思考是正常的）
+          // 笔记 30：第一次超时只重置计时（对齐 openclaw：卡住提示靠 ⏳⚠️ 表情，
+          // 不打扰文字；给 agent 一次恢复机会）。再超时仍未恢复 → 停止。
           this.stallWarned = true;
-          void this.delivery
-            .sendMessage(this.turn.chatId, "⏳ 还在处理中…（长时间无进展。可以再等等，或发 /stop 取消重来）")
-            .catch(() => {});
-          this.lastActivityAt = Date.now(); // 重置 idle 计时，再给 5 分钟
+          this.lastActivityAt = Date.now();
           this.startWatchdog();
         } else {
-          // 第二次超时（已提示过）→ 友好暂停
-          void this.abortTurn("⏸️ 任务长时间无进展，已自动暂停。直接重发需求即可，或发 /stop 彻底取消。");
+          // 第二次超时（仍无活动）→ 停止：清表情（onAbort）+ 极简提示
+          void this.abortTurn("⏸️ 已停止（长时间无响应）");
         }
       }
     }, timeoutMs + 1000);
@@ -383,7 +384,7 @@ export class OpenclawBridge {
   /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。 */
   async abortCurrentTurn(reason = "已中止当前任务。"): Promise<void> {
     if (!this.turn && this.debouncer) {
-      // 无活动 turn 时仍回复确认
+      // 无活动 turn 时仍走 abort（笔记 30：onAbort 清表情 + 中断 agent，命令层负责回复确认）
       try {
         this.onAbort?.();
       } catch {

@@ -23,6 +23,9 @@ export interface OpenclawStyleConfig {
     commandText?: "raw" | "status";
     /** 笔记 19：思维链注入 progress 方块（openclaw progress.thinking，默认 true）。 */
     thinking?: boolean;
+    /** 笔记 31：思维行字符预算（独立于 maxLineChars；openclaw progress.maxLineChars 默认 120）。
+     *  maxLineChars 原被复用于思考行截断——配置 40 时思考行被切得粉碎（观感生硬）。 */
+    thinkingMaxChars?: number;
     /** 笔记 19：endTurn 折叠摘要（🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns，默认 false）。 */
     receiptSummary?: boolean;
   };
@@ -64,6 +67,7 @@ export const DEFAULTS: OpenclawStyleConfig = {
     maxLineChars: 120,
     commandText: "raw",
     thinking: true,
+    thinkingMaxChars: 120,
     receiptSummary: false,
   },
   reasoning: { enabled: true, style: "emoji-italic" },
