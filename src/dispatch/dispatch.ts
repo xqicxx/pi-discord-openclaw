@@ -57,6 +57,8 @@ export interface OpenclawBridgeConfig {
   onDeliveryFailed?: (error: unknown, context: string) => void;
   /** 笔记 36：上下文使用率阈值（0-1），超过时触发 onContextHighUsage 提醒。 */
   contextHighUsageThreshold?: number;
+  /** 笔记 36：上下文使用率过高时降低 thinking 级别（减小 TTFT）。 */
+  setThinkingLevel?: (level: "low" | "high") => void;
   /** 笔记 36：上下文使用率过高回调（宿主可提示用户 /compact）。 */
   onContextHighUsage?: (usageText: string) => void;
 }
@@ -340,7 +342,8 @@ export class OpenclawBridge {
     if (!match) return;
     const pct = parseInt(match[1], 10);
     if (pct >= threshold * 100) {
-      this.config.onContextHighUsage(usageText);
+      this.config.setThinkingLevel?.("low");
+      this.config.onContextHighUsage?.(usageText);
     }
   }
 
