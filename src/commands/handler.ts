@@ -139,6 +139,14 @@ export async function executeCommand(
       return reply("🗜️ 已请求压缩上下文。");
     }
 
+    // 笔记 36：/compact 别名（用户可能输入 /compact 或 /compress）
+    case "compress": {
+      if (!ctx) return reply("桥接尚未就绪，无法压缩。");
+      const instructions = (values.instructions as string | undefined)?.trim();
+      ctx.compact({ reason: instructions || undefined });
+      return reply("🗜️ 已请求压缩上下文。");
+    }
+
     case "think": {
       const level = parseThinkingLevel(rawArgs);
       if (level === null) {
