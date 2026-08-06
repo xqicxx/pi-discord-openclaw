@@ -784,10 +784,10 @@ export default function (pi: ExtensionAPI) {
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
     // 笔记 31：排队消息升级为 active（drain 后开始被处理）——队首消息从 ⏳ 变 👀；
-    // 旧 active 正常路径已 finished/清理，这里兜底 clear（异常路径防残留）
+    // 修复：不再 clear 旧 controller（旧消息的终态表情由 agent_end 自然处理），
+    // 避免竞态下旧消息的 ✓ 被清掉。
     if (queuedReactions.length > 0) {
       const next = queuedReactions.shift()!;
-      void activeReactions?.clear().catch(() => {});
       activeReactions = next;
     }
     // 笔记 30：处理中 👀（与排队 ⏳ 区分）
@@ -874,6 +874,14 @@ export default function (pi: ExtensionAPI) {
     // 笔记 32：先 await endTurn（回答正文最终 flush 完成）再进入终态表情——
     // 旧实现 void 不等待，setDone 在回答还在 throttle 分块发送时就执行，
     // removeActiveEmojis 把 🧠/👀 全删，用户看到「回复还在输出、表情已经掉了」。
+    // 修复：先同步执行 setDone（在 await endTurn 之前），避免 await 期间新消息
+    // agent_start 换绑 controller 导致旧消息终态表情丢失。
+    const reactions = activeReactions;
+    const srCfg = cfg.statusReactions;
+    if (reactions && srCfg?.enabled !== false) {
+      // 先标记终态（同步触发，不等 endTurn）
+      void reactions.setDone().catch(() => {});
+    }
     void (async () => {
       try {
         await bridge.endTurn();
@@ -882,11 +890,8 @@ export default function (pi: ExtensionAPI) {
       }
       // 笔记 23/35：完成 → ✓ 常驻表示完成（openclaw 终态常驻语义，不再回 ⏳ 排队态）；
       // 仅显式 removeAckAfterReply=true 时才 hold 后全清。
-      const reactions = activeReactions;
-      const srCfg = cfg.statusReactions;
       if (reactions && srCfg?.enabled !== false) {
         try {
-          await reactions.setDone();
           if (srCfg?.removeAckAfterReply === true) {
             await sleepMs(STATUS_TIMING.doneHoldMs);
             await reactions.clear();
