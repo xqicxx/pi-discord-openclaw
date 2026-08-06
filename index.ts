@@ -18,7 +18,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   loadDiscordConnectionConfig,
@@ -268,6 +268,32 @@ function adaptCommandCtx(pi: ExtensionAPI, ctx: ExtensionContext): CommandExecut
  * 提供 DISCORD_BOT_TOKEN（环境变量或 discord.json 的 token）。
  */
 export default function (pi: ExtensionAPI) {
+  // 笔记 30：重启检测——上次异常退出（崩溃/SIGKILL）时启动发提示，
+  // 避免服务重启后旧方块/表情残留「卡在那以为还在跑」
+  const CRASH_MARK = "/tmp/pi-discord-crash-mark";
+  const ACTIVE_CH_FILE = "/tmp/pi-discord-active-channel";
+  let crashedLastRun = false;
+  try {
+    if (existsSync(CRASH_MARK)) crashedLastRun = true;
+    writeFileSync(CRASH_MARK, String(process.pid));
+  } catch { /* 标记失败不影响主流程 */ }
+  // 笔记 31：停机通知——正常重启（更新代码/systemctl restart）也发 Discord 消息，
+  // 用户正在使用时不会「分不清 bot 是死了还是重启」。SIGHUP 也处理（tmux kill-server
+  // 会给 pi 发 SIGHUP，只监听 SIGTERM 会漏）。尽力而为：3s 兜底强制退出。
+  const notifyShutdown = (): void => {
+    try { rmSync(CRASH_MARK); } catch { /* 忽略 */ }
+    const ch = (() => {
+      try { return readFileSync(ACTIVE_CH_FILE, "utf8").trim() || undefined; } catch { return undefined; }
+    })();
+    if (!ch) { process.exit(0); return; }
+    void rest
+      .createChannelMessage(ch, { content: "🔄 服务重启中，约 15 秒后恢复…" })
+      .catch(() => {})
+      .finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on("SIGTERM", () => notifyShutdown());
+  process.on("SIGHUP", () => notifyShutdown());
   const conn: DiscordConnectionConfig = loadDiscordConnectionConfig();
   if (!conn.token) {
     console.log(`${TAG} 未配置 DISCORD_BOT_TOKEN（discord.json 或环境变量），已跳过`);
@@ -587,7 +613,14 @@ export default function (pi: ExtensionAPI) {
   }
 
   // 入站：Gateway MESSAGE_CREATE → 过滤 → 文本命令拦截 → ack(👀) → debounce → pi
-  let statusReactions: StatusReactionController | undefined;
+  // 笔记 31：表情状态机生命周期（对齐 openclaw 每条消息独立 controller）——
+  //   activeReactions = 当前 turn 消息的状态机（⏳→👀→🧠/🛠️→✅→清理）
+  //   queuedReactions = turn 活跃时收到的新消息（只标 ⏳=排队，不进状态机，
+  //     避免全局 thinking/tool 事件把 🧠/🛠️ 错挂到「还没被处理」的消息上——旧实现
+  //     每次收消息都重建 controller 导致的表情错位/残留 bug）
+  //   agent_start 时 queued 队首升级为 active；终态（agent_end/abort/错误）必清理
+  let activeReactions: StatusReactionController | undefined;
+  const queuedReactions: StatusReactionController[] = [];
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -598,6 +631,9 @@ export default function (pi: ExtensionAPI) {
     if (conn.channels?.length && !conn.channels.includes(channelId)) return;
     activeChannelIds.set(channelId, channelId);
     lastActiveChannelId = channelId;
+    try {
+      writeFileSync(ACTIVE_CH_FILE, channelId);
+    } catch { /* 忽略 */ }
 
     // 笔记 20/21：文本命令拦截（/stop /help 等本地执行，不进 agent）
     const resolved = resolveTextCommand(content, { botUsername });
@@ -660,17 +696,26 @@ export default function (pi: ExtensionAPI) {
     }
 
     // 普通消息：ack + 提交 pi
-    // 笔记 30：只走 statusReactions 状态机（⏳=收到/排队）——
-    // 删掉 queueInitialAckReaction（裸加 👀 不经状态机：清不掉 + reaction 操作翻倍触发限流，
-    // 导致后续 🧠/🛠️ 全部失败——「思考时没标签」根因）。
-    const adapter = createDiscordReactionAdapter(rest, channelId, message.id);
-    statusReactions = createStatusReactionController({
-      adapter,
-      enabled: cfg.statusReactions?.enabled ?? true,
-      emojis: cfg.statusReactions?.emojis,
-      timing: cfg.statusReactions?.timing,
-    });
-    void statusReactions.setQueued();
+    // 笔记 30：只走状态机（⏳=收到/排队）——删掉 queueInitialAckReaction（裸加 👀 不经状态机：
+    // 清不掉 + reaction 操作翻倍触发限流，导致后续 🧠/🛠️ 全部失败——「思考时没标签」根因）。
+    // 笔记 31：turn 活跃（bot 正在思考/操作）时收到的新消息 → 只建排队 controller（⏳=排队中），
+    // 不进入状态机——否则全局 thinking/tool 事件会把 🧠/🛠️ 错挂到这条新消息上
+    // （「没思考却有思考标签」根因），且旧消息的 controller 被覆盖后表情永久残留。
+    const makeReactions = (target: { channelId: string; messageId: string }) =>
+      createStatusReactionController({
+        adapter: createDiscordReactionAdapter(rest, target.channelId, target.messageId),
+        enabled: cfg.statusReactions?.enabled ?? true,
+        emojis: cfg.statusReactions?.emojis,
+        timing: cfg.statusReactions?.timing,
+      });
+    if (activeReactions && !activeReactions.isFinished()) {
+      const queued = makeReactions({ channelId, messageId: message.id });
+      queued.setQueued();
+      queuedReactions.push(queued);
+    } else {
+      activeReactions = makeReactions({ channelId, messageId: message.id });
+      void activeReactions?.setQueued();
+    }
     bridge.pushUserMessage(content, channelId);
   });
 
@@ -692,6 +737,9 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // 忽略中断失败
     }
+    // 笔记 30/31：停止时清空 active 状态表情（🧠🛠️ 不再挂着，避免「停了却像还在处理」）；
+    // 排队消息的 ⏳ 保留（drain 后仍会依次处理，agent_start 升级为 active）
+    void activeReactions?.clear().catch(() => {});
   };
   // 笔记 29：turn 活跃时收到新用户消息 → 中断当前 agent，立即响应新消息
   bridge.onInterrupt = () => {
@@ -749,16 +797,46 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
+    // 笔记 31：排队消息升级为 active（drain 后开始被处理）——队首消息从 ⏳ 变 👀；
+    // 旧 active 正常路径已 finished/清理，这里兜底 clear（异常路径防残留）
+    if (queuedReactions.length > 0) {
+      const next = queuedReactions.shift()!;
+      void activeReactions?.clear().catch(() => {});
+      activeReactions = next;
+    }
     // 笔记 30：处理中 👀（与排队 ⏳ 区分）
-    void statusReactions?.setWorking();
+    void activeReactions?.setWorking();
   });
+  // 笔记 31：思考总内容低于该阈值视为「无实质思考」（模型形式化输出），不显示 🧠。
+  const MIN_REASONING_CHARS = 20;
+  let thinkingAccumChars = 0;
+  // 笔记 31：思考是否对用户可见（推理行渲染 + reaction 🧠 都开）。不可见时 thinking_delta
+  // 不算「可见活动」——不重置 stall 计时，10s ⏳ / 30s ⚠️ 照常出现，用户能分辨死活。
+  const thinkingVisible = (cfg.streaming.thinking ?? true) && cfg.reasoning.enabled;
   pi.on("message_update", (event, ctx) => {
     captureCtx(ctx);
-    // 笔记 30：开始思考 → 🧠（覆盖处理中 👀）
-    if (event.assistantMessageEvent.type === "thinking_delta") {
-      void statusReactions?.setThinking();
+    const ev = event.assistantMessageEvent;
+    // 笔记 30/31：思考状态生命周期——开始 → 🧠；结束（thinking_end）→ 移除 🧠（不常驻）。
+    // 空 delta（模型输出空思考帧）不触发 🧠；thinking_end 时总内容 < 阈值 → 立即移除
+    //（「没思考却有思考标签」的两个来源：事件错挂已由 31 的排队机制解决，这里是内容过滤）。
+    if (ev.type === "thinking_delta") {
+      const delta = ev.delta ?? "";
+      if (delta.trim().length > 0) {
+        thinkingAccumChars += delta.length;
+        void activeReactions?.setThinking(thinkingVisible);
+        // 笔记 31：思考期间持续 typing（即使思考行被关闭）——「还活着」的可见信号。
+        // delivery 类型签名 (chatId, action)，runtime 只取 chatId（节流 10s 在内）
+        try { void delivery.sendChatAction(lastActiveChannelId ?? "", "typing"); } catch { /* 忽略 */ }
+      }
+    } else if (ev.type === "thinking_end") {
+      if (thinkingAccumChars < MIN_REASONING_CHARS) {
+        void activeReactions?.removeThinkingNow();
+      } else {
+        void activeReactions?.removeThinking();
+      }
+      thinkingAccumChars = 0;
     }
-    const adapted = adaptPiAssistantEvent(event.assistantMessageEvent);
+    const adapted = adaptPiAssistantEvent(ev);
     if (adapted) bridge.handleActivity(adapted);
   });
   pi.on("tool_execution_start", (event, ctx) => {
@@ -770,7 +848,9 @@ export default function (pi: ExtensionAPI) {
       args: event.args as Record<string, unknown> | undefined,
     });
     // 笔记 23：工具分类表情（💻/🌐/🏗️/🛫/💁/🛠️，按工具名）
-    void statusReactions?.setTool(event.toolName);
+    // 笔记 33：透传 event.args —— fabric_exec 内部调用 web 工具时，仅靠工具名识别不到
+    //（工具名是 fabric_exec），args 里的 web 信号（web_search/firecrawl/exa 等）才能命中 🌐。
+    void activeReactions?.setTool(event.toolName, event.args as Record<string, unknown> | undefined);
   });
   pi.on("tool_execution_update", (event, ctx) => {
     captureCtx(ctx);
@@ -790,21 +870,37 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_end", (_event, ctx) => {
     captureCtx(ctx);
-    void bridge.endTurn();
-    // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
-    const reactions = statusReactions;
-    const srCfg = cfg.statusReactions;
-    if (reactions && srCfg?.enabled !== false) {
-      void (async () => {
-        await reactions.setDone();
-        if (srCfg?.removeAckAfterReply !== false) {
-          await sleepMs(STATUS_TIMING.doneHoldMs);
-          await reactions.clear();
-        } else {
-          await reactions.restoreInitial();
+    // 笔记 32：先 await endTurn（回答正文最终 flush 完成）再进入终态表情——
+    // 旧实现 void 不等待，setDone 在回答还在 throttle 分块发送时就执行，
+    // removeActiveEmojis 把 🧠/👀 全删，用户看到「回复还在输出、表情已经掉了」。
+    void (async () => {
+      try {
+        await bridge.endTurn();
+      } catch {
+        // 忽略 endTurn 失败（回答投递失败由 draft-stream 层处理）
+      }
+      // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
+      const reactions = activeReactions;
+      const srCfg = cfg.statusReactions;
+      if (reactions && srCfg?.enabled !== false) {
+        try {
+          await reactions.setDone();
+          if (srCfg?.removeAckAfterReply !== false) {
+            await sleepMs(STATUS_TIMING.doneHoldMs);
+            await reactions.clear();
+          } else {
+            await reactions.restoreInitial();
+          }
+        } catch {
+          // 忽略表情清理失败（重试机制在状态机内）
         }
-      })();
-    }
+        // 笔记 31：turn 消息收尾完成 → 释放 active（下一条消息重新绑定）。
+        // 条件守卫：期间若已被新 turn 的 agent_start 换绑，不误清新 controller。
+        if (activeReactions === reactions) activeReactions = undefined;
+      } else {
+        activeReactions = undefined;
+      }
+    })();
   });
 
   // 连接 Gateway；ready 后注册 slash 命令（笔记 20/21：
@@ -812,6 +908,25 @@ export default function (pi: ExtensionAPI) {
   gateway.events.on("ready", (data) => {
     applicationId = data.application?.id;
     botUsername = data.user?.username;
+    // 笔记 30/31：启动通知——上次异常退出 → 提示任务中断；正常重启 → 简短确认。
+    // 用户正在 Discord 使用时，重启后 bot 需要 ~15s 加载，不通知就会「分不清死活」。
+    const wasCrash = crashedLastRun;
+    crashedLastRun = false;
+    void (async () => {
+      try {
+        let ch = readFileSync(ACTIVE_CH_FILE, "utf8").trim();
+        if (!ch && conn.channels?.length) ch = conn.channels[0];
+        if (ch) {
+          await rest.createChannelMessage(ch, {
+            content: wasCrash
+              ? "🔄 服务已重启（上次异常退出），之前进行中的任务已中断。直接重发需求即可。"
+              : "✅ 服务已重新上线。",
+          });
+        }
+      } catch { /* 忽略 */ }
+      // 不删标记：load 时已重写为本次 pid（运行中标记=异常退出会残留检测用），
+      // 正常退出由 SIGTERM 钩子清理；崩溃（SIGKILL）残留 → 下次启动再提示
+    })();
     if (applicationId) {
       void (async () => {
         let builtins: ChatCommandDefinition[] = [];
@@ -1060,11 +1175,16 @@ export default function (pi: ExtensionAPI) {
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
     notifyError("Discord Gateway 断连", `code=${code}，检查 token/intents/权限`);
-    // 笔记 23：错误 → ❌（终态 hold 后 clear）
+    // 笔记 23/31：错误 → ❌；笔记 35：跟随 removeAckAfterReply（openclaw 原版语义）——
+    // 默认（false）restoreInitial 回到 ⏳，保留 ack；显式 true 才全清。
     void (async () => {
-      await statusReactions?.setError();
-      await sleepMs(STATUS_TIMING.errorHoldMs);
-      await statusReactions?.clear();
+      await activeReactions?.setError();
+      if (cfg.statusReactions?.removeAckAfterReply !== false) {
+        await sleepMs(STATUS_TIMING.errorHoldMs);
+        await activeReactions?.clear();
+      } else {
+        await activeReactions?.restoreInitial();
+      }
     })();
   });
   gateway.connect();

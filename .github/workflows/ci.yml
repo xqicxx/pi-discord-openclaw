@@ -1,12 +1,13 @@
 name: CI
 on:
   pull_request_target:
-    types: [labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 permissions:
   contents: read
 jobs:
   test:
-    if: github.event.label.name == 'ai-approved'
+    # 检查 PR 当前是否带 ai-approved 标签（不依赖触发事件的 label，GITHUB_TOKEN 打标的事件会被 GitHub 抑制）
+    if: contains(github.event.pull_request.labels.*.name, 'ai-approved')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
