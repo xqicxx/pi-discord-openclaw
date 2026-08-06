@@ -500,6 +500,20 @@ export default function (pi: ExtensionAPI) {
     const merged = mergedCommands;
     try {
       if (local) {
+        // /resume 特判：先 defer（3s 内 ACK），再执行，最后 followUp（避免超时）
+        if (local.key === "resume") {
+          await rest.createInteractionResponse(interaction.id, interaction.token, {
+            type: InteractionResponseType.DeferredChannelMessageWithSource,
+            data: {},
+          });
+          const result = await executeCommand(local, readInteractionArgs(interaction), {
+            pi,
+            getCtx: () => commandCtx,
+            rpc,
+          });
+          await followUpInteraction(interaction, result.content, result.ephemeral ?? true);
+          return;
+        }
         const result = await executeCommand(local, readInteractionArgs(interaction), {
           pi,
           getCtx: () => commandCtx,
