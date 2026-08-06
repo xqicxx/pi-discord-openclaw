@@ -404,10 +404,16 @@ export class OpenclawBridge {
     await this.drainPending();
   }
 
-  /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。 */
+  /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。
+   *  注意：本方法不保证发送确认消息——
+   *  - 有活跃 turn：abortTurn 内部向 turn.chatId 发送 reason；
+   *  - 无活跃 turn：本层无可信 chatId（debouncer key 可能是任意渠道），只调 onAbort
+   *    （宿主清表情 + 中断 agent）；确认回复由宿主（index.ts abort 拦截路径
+   *    replyTextCommand）负责，避免双发。 */
   async abortCurrentTurn(reason = "已中止当前任务。"): Promise<void> {
     if (!this.turn && this.debouncer) {
-      // 无活动 turn 时仍走 abort（笔记 30：onAbort 清表情 + 中断 agent，命令层负责回复确认）
+      // 无活动 turn 时仍走 abort（笔记 30：onAbort 清表情 + 中断 agent）。
+      // 确认消息由 index.ts 的 abort 拦截路径发送（replyTextCommand），这里不重复发送。
       try {
         this.onAbort?.();
       } catch {
