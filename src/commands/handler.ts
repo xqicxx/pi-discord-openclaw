@@ -28,6 +28,11 @@ export interface CommandHandlerDeps {
   rpc?: PiRpcBridge;
   /** 当前工作目录（RPC 导出路径校验用）。 */
   cwd?: string;
+  /** 发起者信息（Discord 用户 id / 角色 id 列表），用于权限校验。 */
+  author?: { userId?: string; roleIds?: string[] };
+  /** 授权配置（allowedUserIds / allowedRoleIds）。 */
+  allowedUserIds?: string[];
+  allowedRoleIds?: string[];
 }
 
 const TERMINAL_ONLY = (cmd: string, hint = "") =>
@@ -165,6 +170,20 @@ export async function executeCommand(
   const ctx = getCtx();
   const parsed = parseCommandArgs(command, rawArgs);
   const values = parsed?.values ?? {};
+
+  // 用户级授权：管理命令仅允许授权用户执行（默认仅 owner）。
+  const ADMIN_COMMANDS = new Set(["quit", "bye", "exit", "resume", "reload", "export", "model", "compact", "compress", "todos", "whimsy"]);
+  if (ADMIN_COMMANDS.has(command.key)) {
+    const userId = deps.author?.userId;
+    const roleIds = deps.author?.roleIds ?? [];
+    const allowedUsers = deps.allowedUserIds ?? [];
+    const allowedRoles = deps.allowedRoleIds ?? [];
+    const isOwner = userId && allowedUsers.length === 0 ? true : allowedUsers.includes(userId ?? "");
+    const hasRole = roleIds.some((r) => allowedRoles.includes(r));
+    if (!isOwner && !hasRole) {
+      return reply("⛔ 你没有权限执行此命令（仅授权用户可操作）。");
+    }
+  }
 
   switch (command.key) {
     case "help":

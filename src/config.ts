@@ -150,6 +150,10 @@ export interface DiscordConnectionConfig {
   channels?: string[];
   /** 忽略 bot 自己的消息（默认 true）。 */
   ignoreBots?: boolean;
+  /** 允许执行管理命令的用户 id 列表（默认空 = 仅 owner）。 */
+  allowedUserIds?: string[];
+  /** 允许执行管理命令的角色 id 列表（默认空 = 无）。 */
+  allowedRoleIds?: string[];
 }
 
 export function loadDiscordConnectionConfig(): DiscordConnectionConfig {
@@ -161,11 +165,15 @@ export function loadDiscordConnectionConfig(): DiscordConnectionConfig {
         token?: string;
         channels?: string[];
         ignoreBots?: boolean;
+        allowedUserIds?: string[];
+        allowedRoleIds?: string[];
       };
       return {
         token: envToken || raw.token?.trim(),
         channels: raw.channels,
         ignoreBots: raw.ignoreBots ?? true,
+        allowedUserIds: raw.allowedUserIds,
+        allowedRoleIds: raw.allowedRoleIds,
       };
     }
   } catch { /* fall through */ }
