@@ -1161,11 +1161,16 @@ export default function (pi: ExtensionAPI) {
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
     notifyError("Discord Gateway 断连", `code=${code}，检查 token/intents/权限`);
-    // 笔记 23/31：错误 → ❌（终态 hold 后 clear）
+    // 笔记 23/31：错误 → ❌；笔记 35：跟随 removeAckAfterReply（openclaw 原版语义）——
+    // 默认（false）restoreInitial 回到 ⏳，保留 ack；显式 true 才全清。
     void (async () => {
       await activeReactions?.setError();
-      await sleepMs(STATUS_TIMING.errorHoldMs);
-      await activeReactions?.clear();
+      if (cfg.statusReactions?.removeAckAfterReply !== false) {
+        await sleepMs(STATUS_TIMING.errorHoldMs);
+        await activeReactions?.clear();
+      } else {
+        await activeReactions?.restoreInitial();
+      }
     })();
   });
   gateway.connect();

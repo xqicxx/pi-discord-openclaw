@@ -75,7 +75,9 @@ export const DEFAULTS: OpenclawStyleConfig = {
   toolProgress: { enabled: true, maxLines: 8 },
   // 笔记 25 性能：debounce 250ms（单人使用合并收益小，延迟收益大——消息秒进 agent）
   inbound: { debounceMs: 250 },
-  statusReactions: { enabled: true, removeAckAfterReply: true },
+  // 笔记 35：默认保留 ack 表情（与 openclaw 原版 removeAckAfterReply=false 一致）——
+  // 完成后 restoreInitial 回到 ⏳，每条消息保留一个 ack，不再全部消失。
+  statusReactions: { enabled: true, removeAckAfterReply: false },
   // 笔记 27：默认 90s 无活动即 abort（防止长 sleep 轮询卡死 turn）
   turnWatchdogMs: 90000,
   tableMode: "code",
