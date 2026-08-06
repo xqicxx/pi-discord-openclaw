@@ -5,7 +5,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "Discord bridge for Pi with OpenClaw-style streaming (reasoning/tool-progress/typed replies/follow-up), ported from pi-telegram-openclaw",
+  "description": "Discord bridge for Pi with OpenClaw-style streaming — reasoning / tool-progress / typed replies / follow-up merging, remote /resume, abort triggers, context guard. Ported from pi-telegram-openclaw",
   "keywords": [
     "pi-package",
     "pi",
