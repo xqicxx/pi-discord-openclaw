@@ -55,6 +55,10 @@ export interface OpenclawBridgeConfig {
   maxToolTimeouts?: number;
   /** 笔记 30：投递/桥层错误通知（宿主发到 discord，避免静默）。 */
   onDeliveryFailed?: (error: unknown, context: string) => void;
+  /** 笔记 36：上下文使用率阈值（0-1），超过时触发 onContextHighUsage 提醒。 */
+  contextHighUsageThreshold?: number;
+  /** 笔记 36：上下文使用率过高回调（宿主可提示用户 /compact）。 */
+  onContextHighUsage?: (usageText: string) => void;
 }
 
 export interface DiscordDelivery {
@@ -256,6 +260,8 @@ export class OpenclawBridge {
   /** 宿主「新消息中断」回调（笔记 29）：turn 活跃时收到新用户消息 → 中断当前 agent
    *  再处理新消息（对齐 openclaw run-now 默认，避免 followUp 排队等旧任务卡死）。 */
   onInterrupt?: () => void;
+  /** 笔记 36：上下文使用率检查回调（宿主注入，返回使用率文本或 null）。 */
+  getContextUsageText?: () => string | null;
 
   /** 用户发消息 → debounce 合并（笔记 04）。 */
   pushUserMessage(text: string, chatId: string): void {
@@ -269,6 +275,8 @@ export class OpenclawBridge {
 
   /** 开始新 turn（agent-start）。 */
   beginTurn(params: { chatId: string; messageId?: string }): TurnManager {
+    // 笔记 36：上下文使用率过高提醒（>70% 时提示用户 /compact，避免膨胀导致延迟）
+    this.checkContextUsage();
     // 笔记 05: isDispatchSuperseded — 新消息取代旧 turn
     if (this.turn && !this.turn.isSuperseded()) {
       this.turn.supersede();
@@ -315,6 +323,21 @@ export class OpenclawBridge {
       this.turn = undefined;
     }
     await this.drainPending();
+  }
+
+  /** 笔记 36：检查上下文使用率，超过阈值时触发提醒。 */
+  private checkContextUsage(): void {
+    const threshold = this.config.contextHighUsageThreshold ?? 0.7;
+    if (threshold <= 0 || !this.config.onContextHighUsage) return;
+    const usageText = this.getContextUsageText?.();
+    if (!usageText) return;
+    // 解析使用率百分比（如 "75%" 或 "75% (98K/131K)"）
+    const match = usageText.match(/(\d+)%/);
+    if (!match) return;
+    const pct = parseInt(match[1], 10);
+    if (pct >= threshold * 100) {
+      this.config.onContextHighUsage(usageText);
+    }
   }
 
   /** 笔记 30：turn 结束后把排队消息合并提交给 agent。 */
