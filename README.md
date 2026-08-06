@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Recreate the OpenClaw streaming experience for the <a href="https://github.com/xqicxx/pi">Pi coding agent</a> on Discord.</strong><br/>
-  🧠 Separate italic reasoning · 🔧 Live tool progress · 📝 Typewriter-style streamed answers · ⏭️ Debounced follow-ups · ⏳→👀→🧠 Status emoji state machine
+  🧠 Separate italic reasoning · 🔧 Live tool progress · 📝 Typewriter-style streamed answers · ⏭️ Debounced follow-ups · ⏳→👀→🧠→✓ Status emoji state machine
 </p>
 
 <p align="center">
@@ -52,10 +52,13 @@ OpenClaw's Discord channel is the **gold standard for streaming output**: reason
 - **🔧 Tool progress** — tool-start/update/end three-state lines, `✓ 🛠️ bash: ...` / `✗ 🧩 fabric_exec`, incremental updates by id, capped line count
 - **📝 Typewriter answers** — 2000-char chunking, throttled edits, retry on failure, preview message (draft-stream)
 - **⏭️ Follow-up merging** — dual-lane debounce, message coalescing, serial flush
-- **⏳→👀→🧠 Status emoji** — queueing (⏳), processing (👀), thinking (🧠), tools (🛠️), done (✅); new messages during a turn are **queued** (openclaw steer/followup semantics) instead of interrupting
+- **⏳→👀→🧠→✓ Status emoji** — queueing (⏳), processing (👀), thinking (🧠), tools (🛠️), done (✓); single-channel state machine, only ever moves forward, and the **✓ completion state stays put** (openclaw `removeAckAfterReply=false` parity — no fallback to ⏳, no cleanup); new messages during a turn are **queued** (openclaw steer/followup semantics) instead of interrupting
 - **📊 Collapse summary** — on answer delivery the box folds into `-# 🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns` (openclaw's core mechanism)
 - **🪄 Markdown tables → Discord embeds** — `tableMode: embed` renders tables as real Discord embed cards
 - **⌨️ Command system** — 88+ global commands + 55 `/skill` subcommands (grouped by category, guild-scoped registration), executed locally without hitting the model; `/todos`, `/whimsy`, `/sessions`, `/abort`, `/compact` bridged directly
+- **⏸️ Abort triggers** — stop / 停止 / 暂停 / やめて / halt … 40+ multi-language trigger words and phrases (ported from openclaw `abort-primitives.ts`), plus `/stop`; an active turn is interrupted immediately with reactions cleaned up
+- **🔁 Remote `/resume`** — `PI_SESSION` env + bridge restart restores any past session from Discord in ~15s (`/resume <id>`), no terminal needed; paired with read-only `/tree`, `/session`, `/copy`, `/settings`, `/export`
+- **📊 Context health guard** — context usage is checked at every turn start; above 70% it reminds you to `/compact` (alias `/compress`) before the session bloats and stalls
 - **👀 Status reactions** — queued/thinking/tool/done/error reactions through the whole lifecycle, with custom emoji and timing
 - **🛡️ Safe by default** — channel allowlist, `ignoreBots`, token masking, per-turn watchdog timeout
 - **🚀 Zero dependencies** — Node ≥ 22 native fetch + WebSocket; one extension file, plug and play
@@ -153,7 +156,7 @@ Layered design (openclaw blueprint, research notes 09–30):
 
 ## Commands
 
-- **88+ global commands**: `/abort`, `/compact`, `/model`, `/sessions`, `/todos`, `/whimsy`, `/quit` and more — executed locally, never routed to the model
+- **88+ global commands**: `/abort`, `/compact` (+ alias `/compress`), `/resume`, `/model`, `/sessions`, `/todos`, `/whimsy`, `/quit` and more — executed locally, never routed to the model
 - **55 `/skill` subcommands**: grouped by category (video 19 / dev 14 / fabric 12 / tools 10, each ≤ Discord's 25 limit), guild-scoped registration to stay under the global cap of 100
 - **Text commands**: `/xx` text-prefix interception, forwarded for local execution
 
@@ -172,14 +175,14 @@ A turn's full lifecycle:
 ## Tests
 
 ```bash
-npm test          # 18 test files (transport/rest/gateway, draft, lanes, dispatch, commands, reactions, e2e-turn)
-npm run typecheck # tsc 0 errors
+npm test          # 21 test files (transport/rest/gateway, draft, lanes, dispatch, commands, reactions, interrupt, resume, e2e-turn)
+npm run typecheck # 10 pre-existing type errors (draft-stream etc., runtime-safe, on the fix list)
 npm run validate  # typecheck + test + audit + pack check
 ```
 
 ## Docs
 
-- `docs/openclaw-research/09-30`: research notes — transport / draft stream / chunking + Markdown / inbound / outbound + threads / Telegram→Discord mapping / command system / registration limits / reasoning-answer separation / interrupt & queue semantics
+- `docs/openclaw-research/09-36`: research notes — transport / draft stream / chunking + Markdown / inbound / outbound + threads / Telegram→Discord mapping / command system / registration limits / reasoning-answer separation / interrupt & queue semantics / abort triggers / resume / reactions lifecycle
 - `docs/architecture.md`: architecture overview
 - `CHANGELOG.md`: version history
 - `BACKLOG.md`: roadmap
