@@ -42,7 +42,7 @@ export interface DraftStreamOptions {
 }
 
 export interface DraftTransport {
-  sendMessage: (text: string) => Promise<string>;
+  sendMessage: (text: string, embeds?: unknown[]) => Promise<string>;
   /** issue 59：编辑时透传 embeds（不传则保持原样；传 undefined 清空）。 */
   editMessage: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
