@@ -361,8 +361,18 @@ export class DraftStream {
     while (this.flushing) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    // 先发送 pending 文本，再标记 stopped（否则 flush() 会因 stopped 直接返回，最终回复丢失）
-    await this.flush();
+    // 笔记 37（issue #104）：flush 失败会内部恢复 pendingText 并 scheduleFlush 重试；
+    // 旧实现 await flush() 后直接置 stopped=true → 重试 flush 被 stopped 拦截，
+    // 最终回答永久丢失（Discord 消息停留在中间态，用户看不到完整回复）。
+    // 改为同步重试直到投递成功——flush 失败超过 MAX_CONSECUTIVE_FAILURES 次会自行
+    // 丢弃文本并通知宿主，循环自然退出；30s 上限防止 429 大限流挂起 agent_end。
+    const stopDeadline = Date.now() + 30_000;
+    while (this.pendingText && Date.now() < stopDeadline) {
+      await this.flush();
+      if (this.pendingText) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
     this.stopped = true;
     await this.deletePreviewIfDwelled();
   }

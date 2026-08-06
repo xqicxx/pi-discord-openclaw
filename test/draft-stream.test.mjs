@@ -117,5 +117,27 @@ const WAIT = 400; // > 250ms 最小节流
   await s.stop();
 }
 
+// 15. issue #104：stop() 时 flush 失败（editMessage 抛错）→ 必须重试投递完整内容，
+// 不能被 stopped 拦截（旧实现：flush 失败恢复 pendingText 后置 stopped=true，重试被拦 → 回答永久丢失）
+{
+  const sent = []; const edited = [];
+  let failEdit = true;             // 首次 editMessage 失败，之后成功
+  const s = new DraftStream({ throttleMs: 300, chunkSize: 100, transport: {
+    sendMessage: async (t) => { sent.push(t); return sent.length; },
+    editMessage: async (id, t) => {
+      if (failEdit) { failEdit = false; throw new Error('mock 429'); }
+      edited.push(t);
+    },
+    deleteMessage: async () => {},
+    sendChatAction: async () => {},
+  }});
+  s.update('final answer');
+  await new Promise((r) => setTimeout(r, 400)); // 首次 flush 成功（sendMessage）
+  assert(sent.length === 1, '首次 update → sendMessage');
+  s.update('final answer extended');            // 新 delta → 编辑（首次失败）
+  await s.stop();                               // stop 内重试
+  assert(edited.length === 1 && edited[0] === 'final answer extended', `stop 后编辑重试成功（实际 ${JSON.stringify(edited)}）`);
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);

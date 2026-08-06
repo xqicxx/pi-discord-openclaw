@@ -874,6 +874,11 @@ export default function (pi: ExtensionAPI) {
     // 笔记 32：先 await endTurn（回答正文最终 flush 完成）再进入终态表情——
     // 旧实现 void 不等待，setDone 在回答还在 throttle 分块发送时就执行，
     // removeActiveEmojis 把 🧠/👀 全删，用户看到「回复还在输出、表情已经掉了」。
+    // 笔记 37（issue #104）：reactions 快照必须在 await endTurn **之前**捕获——
+    // endTurn 内部 drainPending 会提交排队消息 → 新 turn 的 agent_start 可能先执行
+    //（clear 旧 controller + 换绑 activeReactions）→ 之后再读 activeReactions 拿到的是
+    // 新 controller：旧消息终态 ✓ 丢失、表情被 clear 全清（用户看到「没有留下任何 emoji」）。
+    const endReactions = activeReactions;
     void (async () => {
       try {
         await bridge.endTurn();
@@ -882,7 +887,7 @@ export default function (pi: ExtensionAPI) {
       }
       // 笔记 23/35：完成 → ✓ 常驻表示完成（openclaw 终态常驻语义，不再回 ⏳ 排队态）；
       // 仅显式 removeAckAfterReply=true 时才 hold 后全清。
-      const reactions = activeReactions;
+      const reactions = endReactions;
       const srCfg = cfg.statusReactions;
       if (reactions && srCfg?.enabled !== false) {
         try {
