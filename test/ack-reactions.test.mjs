@@ -40,29 +40,30 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const set = []; const removed = [];
   const adapter = { setReaction: async (e) => set.push(e), removeReaction: async (e) => removed.push(e) };
   const ctl = createStatusReactionController({ adapter, timing: { debounceMs: 5 } });
-  ctl.setQueued();   // 👀 immediate
+  ctl.setQueued();   // ⏳ immediate
   await wait(20);
   ctl.setThinking(); // 🧠 debounce
   await wait(20);
   ctl.setTool();     // 🛠️ debounce
   await wait(20);
   await ctl.setDone(); // ✅ 终态（finishWithEmoji）
-  assert(set.join(',') === '👀,🧠,🛠️,✅', `状态转移表情：${set.join(' → ')}`);
-  assert(removed.join(',') === '👀,🧠,🛠️', '终态移除除 ✅ 外全部（keepEmoji）');
+  assert(set.join(',') === '⏳,🧠,🛠️,✅', `状态转移表情：${set.join(' → ')}`);
+  assert(removed.join(',') === '⏳,🧠,🛠️', '终态移除除 ✅ 外全部（keepEmoji）');
   assert(ctl.isFinished() === true, 'done 后 finished');
   assert(ctl.activeEmoji() === '✅', '终态 = ✅');
 }
 
-// 3b. debounce 合并：快速连续中间状态只应用最后一个（openclaw 原生语义）
+// 3b. 快速连续状态调用：全部立即应用（笔记 31 起 setThinking/setTool 改 immediate，
+//     applyEmoji 按 activeEmojis 去重 → 无重复 API；旧「debounce 覆盖」语义已不存在）
 {
   const set = [];
   const ctl = createStatusReactionController({ adapter: { setReaction: async (e) => set.push(e), removeReaction: async () => {} }, timing: { debounceMs: 10 } });
-  ctl.setQueued();   // 👀 immediate
-  ctl.setThinking(); // 🧠 被下一个覆盖
-  ctl.setTool();     // 🛠️ 生效
+  ctl.setQueued();   // ⏳ immediate
+  ctl.setThinking(); // 🧠 立即
+  ctl.setTool();     // 🛠️ 立即
   await wait(40);
   await ctl.setDone();
-  assert(set.join(',') === '👀,🛠️,✅', 'debounce 合并中间状态（🧠 被覆盖）');
+  assert(set.join(',') === '⏳,🧠,🛠️,✅', '快速连续调用立即应用（immediate + 去重）');
 }
 
 // 4. error 路径：→ ❌ + 终态保护（后续 setThinking 被忽略）
@@ -94,7 +95,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ctl.setThinking();
   await wait(30);
   await ctl.restoreInitial();
-  assert(set.join(',') === '🧠,👀' && removed.join(',') === '🧠', 'restoreInitial → 回 👀 并移除其他');
+  assert(set.join(',') === '🧠,⏳' && removed.join(',') === '🧠', 'restoreInitial → 回 ⏳ 并移除其他');
 }
 
 // 7. 工具分类表情（openclaw resolveToolEmoji）
@@ -115,6 +116,44 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(resolveToolEmoji('bash', { coding: 'X' }) === 'X', 'emojiOverrides 按分类覆盖');
 }
 
+// 7b. 笔记 33：args 透传——fabric_exec 内部调用 web 工具 → 🌐（工具名识别不到时靠 args）
+{
+  const cases = [
+    ['fabric_exec', { code: "extensions.web_search({ query: 'x' })" }, '🌐'],
+    ['fabric_exec', { code: "await mcp.exa.web_search_exa({ query: 'x' })" }, '🌐'],
+    ['fabric_exec', { code: "pi.bash({ cmd: 'ls' })" }, '💻'],           // 无 web 信号 → 按工具名 coding
+    ['fabric_exec', undefined, '💻'],                                     // 无 args → 按工具名
+    ['web_search', { code: "pi.bash({ cmd: 'ls' })" }, '🌐'],            // 工具名本身命中 web
+  ];
+  let ok = true;
+  for (const [name, args, expect] of cases) {
+    const got = resolveToolEmoji(name, {}, args);
+    if (got !== expect) { ok = false; console.log('    ✗', name, JSON.stringify(args), '→', got, '期望', expect); }
+  }
+  assert(ok, 'args 透传：fabric_exec 内部 web → 🌐（纯 bash 仍 💻）');
+}
+
+// 7c. 笔记 33 修复：源码提词不误报（没搜网不挂 🌐）——bare-word 曾把这些判成搜索
+{
+  const cases = [
+    ['fabric_exec', { code: "grep -iE 'web_search|firecrawl|tavily' src" }, '💻'],            // grep 模式提词
+    ['fabric_exec', { code: "// 调研 web_search 工具的可用性" }, '💻'],                      // 注释提词
+    ['fabric_exec', { code: "const t = ['web_search','firecrawl','agent_browser']" }, '💻'], // 工具清单提词
+    ['fabric_exec', { code: "await extensions.memory_search({ query: 'x' })" }, '💻'],        // 无关工具
+    ['fabric_exec', { code: "pi.read({ path: 'docs' })" }, '💻'],                            // 无关工具
+    ['fabric_exec', { code: "fetch('https://www.google.com')" }, '🌐'],                      // 真实联网 URL
+    ['fabric_exec', { code: "agent-reach search 'x'" }, '🌐'],                               // CLI 命令
+    ['fabric_exec', { code: "webSearch('foo')" }, '🌐'],                                     // 真实调用语法
+    ['fabric_exec', { code: "await mcp.firecrawl.scrape({ url: 'https://x.com' })" }, '🌐'], // MCP 真实调用
+  ];
+  let ok = true;
+  for (const [name, args, expect] of cases) {
+    const got = resolveToolEmoji(name, {}, args);
+    if (got !== expect) { ok = false; console.log('    ✗', name, JSON.stringify(args), '→', got, '期望', expect); }
+  }
+  assert(ok, '源码提词不误报（grep/注释/清单 → 💻；真实调用 → 🌐）');
+}
+
 // 8. stall 警告：无活动超时 → ⏳（软）/ ⚠️（硬）
 {
   const set = [];
@@ -122,6 +161,29 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ctl.setThinking();
   await wait(90);
   assert(set.includes('⏳') && set.includes('⚠️'), `stall 警告：${set.join(',')}`);
+}
+
+// 8b. 笔记 33：活动恢复 → 残留的 ⏳/⚠️ 被移除（「警告不解除」根因修复）
+{
+  const set = []; const removed = [];
+  const ctl = createStatusReactionController({ adapter: { setReaction: async (e) => set.push(e), removeReaction: async (e) => removed.push(e) }, timing: { debounceMs: 5, stallSoftMs: 25, stallHardMs: 50 } });
+  ctl.setThinking();
+  await wait(70);                 // 触发 ⏳ + ⚠️
+  assert(set.includes('⏳') && set.includes('⚠️'), `8b stall 已触发：${set.join(',')}`);
+  ctl.setThinking();              // 新活动（恢复正常）
+  await wait(15);                 // 等 enqueue 串行执行 removeEmoji
+  assert(removed.includes('⏳') && removed.includes('⚠️'), `8b 恢复活动后 ⏳⚠️ 被移除：removed=${removed.join(',')}`);
+}
+
+// 8c. 笔记 33：长任务/联网工具（fabric_exec）→ 宽 stall 窗口，短时无事件不误报 ⚠️
+{
+  const set = [];
+  const ctl = createStatusReactionController({ adapter: { setReaction: async (e) => set.push(e), removeReaction: async () => {} }, timing: { debounceMs: 5, stallSoftMs: 20, stallHardMs: 40 } });
+  ctl.setTool('fabric_exec', { code: "extensions.web_search({ query: 'x' })" }); // long：soft 60 / hard 160
+  await wait(55); // 距 setTool 55ms：普通工具早已 ⏳(20ms)+⚠️(40ms)，长任务窗口内应无 stall
+  assert(!set.includes('⏳') && !set.includes('⚠️'), `8c 长任务窗口内无 stall 误报：${set.join(',')}`);
+  await wait(120); // 累计 175ms > 160（hard override）→ ⚠️ 终会出现（工具真的卡住仍能提醒）
+  assert(set.includes('⚠️'), `8c 超长时仍触发 ⚠️（卡死检测不失效）：${set.join(',')}`);
 }
 
 // 9. 表情覆盖（emojis）

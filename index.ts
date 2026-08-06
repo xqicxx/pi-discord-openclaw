@@ -834,7 +834,9 @@ export default function (pi: ExtensionAPI) {
       args: event.args as Record<string, unknown> | undefined,
     });
     // 笔记 23：工具分类表情（💻/🌐/🏗️/🛫/💁/🛠️，按工具名）
-    void activeReactions?.setTool(event.toolName);
+    // 笔记 33：透传 event.args —— fabric_exec 内部调用 web 工具时，仅靠工具名识别不到
+    //（工具名是 fabric_exec），args 里的 web 信号（web_search/firecrawl/exa 等）才能命中 🌐。
+    void activeReactions?.setTool(event.toolName, event.args as Record<string, unknown> | undefined);
   });
   pi.on("tool_execution_update", (event, ctx) => {
     captureCtx(ctx);

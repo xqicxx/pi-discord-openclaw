@@ -38,8 +38,9 @@ export interface ToolProgressEvent {
 }
 
 const MAX_LINE_CHARS = 100; // 笔记 30：工具命令 detail 截断 300→100，方块更紧凑
-/** 笔记 19: 思维行默认字符预算（openclaw progress.maxLineChars 默认 120）。 */
-const DEFAULT_THINKING_MAX_CHARS = 120;
+/** 笔记 19: 思维行默认字符预算（openclaw progress.maxLineChars 默认 120）。
+ *  笔记 34: 默认 120→60，思考方块更紧凑。 */
+const DEFAULT_THINKING_MAX_CHARS = 60;
 /** 笔记 19: 思考/回答分离正则（openclaw progress-draft-status-text）。 */
 const THINKING_TAG_RE =
   /<\s*(\/?)\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b[^<>]*>/gi;

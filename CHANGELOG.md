@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.21: 🌐 误报修复——没搜网不再挂地球（bare-word → 只认真实调用形态）
+
+- `Bugfix`: **没搜网也挂 🌐**（用户实锤）——笔记 33 的 WEB_ARGS_RE 是 bare-word 匹配，而 fabric_exec 的 args 是 TS 源码：源码里**提过** web_search/firecrawl/tavily/bing 等字样（grep 模式、注释、工具清单、测试用例）就误判成搜索。修复：`argsHaveWebSignal` 只认调用形态——①调用语法 `web_search(` / `webSearch(` / `web_fetch_exa(` / `firecrawl.scrape(` / `agent_browser(` / `search_web(`；②具名访问 `extensions.web_search` / `mcp.exa` / `mcp.firecrawl` / `mcp.tavily`；③搜索引擎 URL（google.com(/search)/duckduckgo.com/bing.com）；④agent-reach CLI 命令。删除全部 bare-word 分支。
+- `Tests`: 新增 7c 回归——grep 模式/注释/工具清单提词 → 💻（不挂 🌐）；真实调用（URL/CLI/调用语法/MCP）→ 🌐。ack-reactions 25 pass / 4 fail（4 fail 为既有遗留，见 0.1.20），typecheck 无新增错误。
+
+## 0.1.20: 联网地球 🌐 识别升级 + ⚠️ 警告「误报 / 不解除」双修复（openclaw 调研笔记 33）
+
+- `Feature`: **fabric_exec 内部联网 → 🌐**——tool_execution_start 把 `event.args` 透传给 setTool（此前只传工具名，args 检测形同虚设）。fabric_exec 是容器工具，名字永远识别不出联网，只有 args.code 里的 web 调用痕迹（web_search/exa/firecrawl/tavily）能兜住；WEB_ARGS_RE 扩充 firecrawl|tavily|exa.web|web_fetch_exa。
+- `Bugfix`: **⚠️ 不解除**——stall 表情只增不减：一旦挂上，后续恢复活动只 add 新表情，⚠️ 残留到终态。修复：resetStallTimers（每次新活动触发）把已挂着的 ⏳/⚠️ 立即移除（removeEmoji 幂等安全）。
+- `Bugfix`: **正常执行误报 ⚠️**——fabric_exec 单次调用执行 30-60s（内部多轮联网）期间 pi 侧无任何事件，30s 硬阈值必误报。修复：长任务/联网工具（fabric_exec/subagent/workflow/web 信号）stall 窗口放宽 soft 3x / hard 4x（30s/120s）；真卡死仍触发 ⚠️（卡死检测不失效）。
+- `Bugfix`: 全局正则（WEB_ARGS_RE/LONG_RUNNING_TOOL_RE 带 g flag）连续 test() 的 lastIndex 串台——同一次任务多个工具互相污染识别结果。修复：test 前重置 lastIndex。
+- `Tests`: 新增 7b（args→🌐 分类）、8b（stall 恢复移除）、8c（长任务窗口不误报 + 超长仍 ⚠️）。ack-reactions 24 pass / 4 fail（基线 19/4，4 fail 为既有遗留 queued=⏳ vs 期望 👀，笔记 32 已记载），typecheck 无新增错误。
+- `Research`: docs/openclaw-research/33-tool-emoji-and-stall-warning.md — 三症状根因调研与修复验证。
+
 ## 0.1.19: 表情「回复时掉 / 完成时不消」双修复（openclaw 调研笔记 32）
 
 - `Bugfix`: **完成但 emoji 没消失**——`removeActiveEmojis`/`removeEmoji` 的 `finally` 无条件删本地 `activeEmojis`：`removeReaction` API 失败（429 限流/网络抖动）时 Discord 上表情还挂着、本地集合已删 → `clear()` 永不重试 → 永久残留。修复：删除成功才删集合，失败保留 + 重试一次 + `console.warn` 日志（可诊断）。

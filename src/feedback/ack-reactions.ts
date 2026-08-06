@@ -48,9 +48,51 @@ const DEPLOY_TOOL_TOKENS = ["fastlane", "deploy", "upload", "testflight", "ship"
 const BUILD_TOOL_TOKENS = ["build", "compile", "xcode", "swift", "gradle", "cargo", "make", "cmake", "webpack", "vite", "tsc", "lint"];
 const CONCIERGE_TOOL_TOKENS = ["navigate", "click", "fill", "screenshot", "scroll", "page", "form", "puppeteer", "playwright", "selenium", "chromedp"];
 
-/** 联网搜索特征（含 fabric_exec 内部调用 web 的 args 信号）。 */
-const WEB_ARGS_RE =
-  /web_search|web-search|web_fetch|web-fetch|agent_browser|agent[-_]reach|duckduckgo|bing|google\.com|search_web|web_search_tool/gi;
+/**
+ * 笔记 33：args 里的真实联网调用信号（只认「实际调用形态」，不认代码文本提词）。
+ * fabric_exec 的 args 是 TS 源码——旧版 bare-word 正则（WEB_ARGS_RE）会把源码里出现过的
+ * "web_search"/"firecrawl"/"tavily"/"bing" 等字样（注释、grep 模式、工具清单、测试用例）
+ * 也判成搜索 → 没搜网也挂 🌐（用户实锤误报）。现在只匹配调用形态：
+ *   1) 调用语法：web_search( / webSearch( / web_fetch_exa( / firecrawl.scrape( / agent_browser(
+ *   2) 具名访问：extensions.web_search / extensions.web_fetch / mcp.exa / mcp.firecrawl / mcp.tavily
+ *   3) 搜索引擎 URL：google.com(/search) / duckduckgo.com / bing.com
+ *   4) agent-reach CLI 命令：agent-reach <cmd>
+ * JSON.stringify 会把代码内双引号转义成 \"——括号/点号不转义，所以调用语法在转义后仍可匹配。
+ */
+function argsHaveWebSignal(args: unknown): boolean {
+  const s = JSON.stringify(args);
+  if (!s) return false;
+  const code = s.slice(0, 3000);
+  // 1) 调用语法（fabric_exec 源码里的真实 web 工具调用）
+  if (/web[_ -]?(?:search|fetch|crawl)\w*\s*\(/i.test(code)) return true;   // web_search( webSearch( web_fetch_exa(
+  if (/firecrawl\.\w+\s*\(|agent_browser\s*\(|search_web\s*\(/i.test(code)) return true;
+  // 2) 具名访问
+  if (/extensions\.\s*web[_ -]?(?:search|fetch)/i.test(code)) return true;  // extensions.web_search / extensions.web_fetch
+  if (/mcp\.\s*(?:exa|firecrawl|tavily)\b/i.test(code)) return true;        // mcp.exa / mcp.firecrawl / mcp.tavily
+  // 3) 搜索引擎 URL（真联网）
+  if (/google\.com(?:\/search)?|duckduckgo\.com|bing\.com/i.test(code)) return true;
+  // 4) agent-reach CLI 命令
+  if (/agent[-_]reach\s+[a-z][\w-]*/i.test(code)) return true;
+  return false;
+}
+
+/**
+ * 笔记 33：工具名或 args 中是否带联网信号。
+ * - toolName 命中 WEB_TOOL_TOKENS（web_search/browser/web_fetch…）
+ * - args 命中 argsHaveWebSignal（fabric_exec 内部真实调用 extensions.web_search / mcp.exa / firecrawl 等）
+ * 两者任一命中 → 🌐。只匹配「实际调用」，源码提词（注释/grep 模式/清单）不误报。
+ */
+function hasWebSignal(toolName?: string, args?: unknown): boolean {
+  if (!toolName && args === undefined) return false;
+  if (WEB_TOOL_TOKENS.some((t) => (toolName ?? "").toLowerCase().includes(t))) return true;
+  if (args === undefined) return false;
+  return argsHaveWebSignal(args);
+}
+
+/** 笔记 33：长任务/联网工具 → 更宽的 stall 窗口（避免正常执行被误报 ⚠️）。
+ *  fabric_exec 跑 TS 脚本、联网搜索 30-60s 很常见，期间 pi 侧无 thinking/tool 事件，
+ *  默认 30s 硬阈值必然误报。这类工具 soft 3x / hard 4x。 */
+const LONG_RUNNING_TOOL_RE = /fabric_exec|fabric|subagent|workflow|agents\.run|agents\.spawn/gi;
 
 /**
  * 工具名 → 分类表情（openclaw resolveToolEmoji）。
@@ -63,7 +105,7 @@ export function resolveToolEmoji(
 ): string {
   const normalized = (toolName ?? "").trim().toLowerCase();
   // 笔记 30：联网搜索常在 fabric_exec 内部发生——args 里有 web 信号也算 🌐
-  const argsWeb = args !== undefined && WEB_ARGS_RE.test(JSON.stringify(args).slice(0, 2000));
+  const argsWeb = hasWebSignal(toolName, args);
   if (!normalized && !argsWeb) return emojis.tool ?? STATUS_EMOJIS.tool;
   const category: StatusEmojiKey = DEPLOY_TOOL_TOKENS.some((t) => normalized.includes(t))
     ? "deploy"
@@ -186,15 +228,21 @@ export function createStatusReactionController(params: StatusReactionControllerO
     if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = undefined; }
   }
 
-  function resetStallTimers(): void {
+  function resetStallTimers(msOverride?: { soft?: number; hard?: number }): void {
     if (stallSoftTimer) clearTimeout(stallSoftTimer);
     if (stallHardTimer) clearTimeout(stallHardTimer);
+    // 笔记 33：新活动到来 → 之前挂上的 ⏳/⚠️ 不再是「卡死」信号，立即移除。
+    // 原语义「只增不减」只该用于正常演进表情（⏳👀🧠🛠️…）；stall 是异常信号，
+    // 恢复活动后还挂着会误导用户「网关死了」，且只能等终态才清。removeEmoji 幂等安全。
+    for (const stallEmoji of [emojis.stallSoft, emojis.stallHard]) {
+      if (activeEmojis.has(stallEmoji)) enqueue(() => removeEmoji(stallEmoji));
+    }
     stallSoftTimer = setTimeout(() => {
       scheduleEmoji(emojis.stallSoft, { immediate: true, skipStallReset: true });
-    }, timing.stallSoftMs);
+    }, msOverride?.soft ?? timing.stallSoftMs);
     stallHardTimer = setTimeout(() => {
       scheduleEmoji(emojis.stallHard, { immediate: true, skipStallReset: true });
-    }, timing.stallHardMs);
+    }, msOverride?.hard ?? timing.stallHardMs);
   }
 
   async function removeActiveEmojis(options: { keepEmoji?: string } = {}): Promise<void> {
@@ -236,10 +284,10 @@ export function createStatusReactionController(params: StatusReactionControllerO
     }
   }
 
-  function scheduleEmoji(emoji: string, options: { immediate?: boolean; skipStallReset?: boolean } = {}): void {
+  function scheduleEmoji(emoji: string, options: { immediate?: boolean; skipStallReset?: boolean; stallOverride?: { soft?: number; hard?: number } } = {}): void {
     if (!enabled || finished) return;
     if (emoji === currentEmoji || emoji === pendingEmoji) {
-      if (!options.skipStallReset) resetStallTimers();
+      if (!options.skipStallReset) resetStallTimers(options.stallOverride);
       return;
     }
     pendingEmoji = emoji;
@@ -258,7 +306,7 @@ export function createStatusReactionController(params: StatusReactionControllerO
         });
       }, timing.debounceMs);
     }
-    if (!options.skipStallReset) resetStallTimers();
+    if (!options.skipStallReset) resetStallTimers(options.stallOverride);
   }
 
   function setQueued(): void {
@@ -316,7 +364,15 @@ export function createStatusReactionController(params: StatusReactionControllerO
   }
 
   function setTool(toolName?: string, args?: unknown): void {
-    scheduleEmoji(resolveToolEmoji(toolName, emojis, args), { immediate: true });
+    const emoji = resolveToolEmoji(toolName, emojis, args);
+    // 笔记 33：长任务/联网工具用宽 stall 窗口；普通工具保持 10s/30s 默认。
+    // LONG_RUNNING_TOOL_RE 带 g flag，test 前重置 lastIndex（同上，防串台）
+    LONG_RUNNING_TOOL_RE.lastIndex = 0;
+    const isLong = (toolName ?? "").length > 0 && LONG_RUNNING_TOOL_RE.test(toolName!) || hasWebSignal(toolName, args);
+    scheduleEmoji(emoji, {
+      immediate: true,
+      ...(isLong ? { stallOverride: { soft: timing.stallSoftMs * 3, hard: timing.stallHardMs * 4 } } : {}),
+    });
   }
 
   function setCompacting(): void {

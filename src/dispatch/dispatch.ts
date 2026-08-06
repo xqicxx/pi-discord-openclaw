@@ -125,7 +125,7 @@ export class TurnManager {
         maxLines: params.config.maxProgressLines ?? 8,
         thinking: params.config.thinkingEnabled ?? true,
         receipt: params.config.receiptSummary ?? false,
-        thinkingMaxChars: params.config.thinkingMaxChars ?? 120,
+        thinkingMaxChars: params.config.thinkingMaxChars ?? 60,
       },
       this.progressDraft,
     );
