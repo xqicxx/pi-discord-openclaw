@@ -153,3 +153,4 @@
 - `Transport`: discord-rest.ts 新增 registerApplicationCommands/createInteractionResponse/createInteractionFollowUp；gateway 新增 INTERACTION_CREATE 分发；types.ts 新增 interaction/application-command 最小面（discord-api-types v10 子集）。Impact: 零依赖实现完整 slash 命令生命周期。
 - `Docs`: 新增 docs/openclaw-research/20-native-commands.md（openclaw 命令处理全链路调研 + 移植决策）与 21-pi-commands-fullset.md（pi 命令全集盘点 + 最终命令集）。
 
+- test: code assist verify (临时测试条目)
