@@ -15,6 +15,10 @@ import {
 import type { PiRpcBridge } from "../rpc/rpc-bridge.ts";
 import { todosAdd, todosDelete, todosList, todosSetStatus, todosShow } from "./todos.ts";
 import { whimsyReset, whimsySet, whimsyStatus } from "./whimsy.ts";
+import { execFile } from "node:child_process";
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** 执行依赖：pi API + 最近一次事件 ctx 捕获器（index.ts 注入）+ RPC 只读桥。 */
 export interface CommandHandlerDeps {
@@ -31,11 +35,59 @@ const TERMINAL_ONLY = (cmd: string, hint = "") =>
 
 **请在本机 pi 终端执行**：/${cmd}${hint ? ` ${hint}` : ""}
 
-（上游限制见 issue #5952；本桥支持 /tree /session /copy /settings /export 等只读命令）`;
+（上游限制见 issue #5952；本桥支持 /tree /session /copy /settings /export 等只读命令，/resume 可远程恢复会话）`;
 
 /** 统一答复前缀（对齐 openclaw command reply 风格）。 */
 function reply(content: string, ephemeral = true): CommandResult {
   return { content, ephemeral };
+}
+
+// ---- /resume 会话恢复（Discord 远程可用：改启动脚本 PI_SESSION + 重启桥自动恢复）----
+
+/** 会话目录（可注入 dir 便于测试）。 */
+export function resolveSessionDir(dir?: string): string {
+  return dir ?? join(homedir(), ".pi", "agent", "sessions", "--home-ubuntu--");
+}
+
+/** 会话文件 → { id, file, label }；id = 文件名中的 UUID 部分。 */
+export function parseSessionFile(file: string): { id: string; label: string; file: string } | null {
+  const m = file.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_([0-9a-f-]+)\.jsonl$/);
+  if (!m) return null;
+  // label: 2026-08-06 04:56:18.417 (id 前 8 位)
+  const stamp = m[1] + "-" + m[2] + "-" + m[3] + " " + m[4] + ":" + m[5] + ":" + m[6] + "." + m[7];
+  return { id: m[8], label: stamp + " (" + m[8].slice(0, 8) + ")", file };
+}
+
+/** 最近 N 个会话（按文件名倒序 = 时间倒序）。 */
+export async function listRecentSessions(limit = 10, dir?: string): Promise<Array<{ id: string; label: string; file: string }>> {
+  const files = (await readdir(resolveSessionDir(dir))).filter((f) => f.endsWith(".jsonl")).sort().reverse();
+  const sessions = files.map(parseSessionFile).filter((s): s is { id: string; label: string; file: string } => s !== null);
+  return sessions.slice(0, limit);
+}
+
+/** 按前缀匹配会话：UUID 前缀或时间戳前缀（如 "019fd56d" / "2026-08-06T04"）。 */
+export async function findSessionsByPrefix(prefix: string, dir?: string): Promise<Array<{ id: string; label: string; file: string }>> {
+  const p = prefix.trim().toLowerCase();
+  if (!p) return [];
+  const sessions = await listRecentSessions(100, dir);
+  return sessions.filter((s) => s.id.toLowerCase().startsWith(p) || s.file.toLowerCase().startsWith(p));
+}
+
+/** 会话列表排版（/resume /sessions 共用）。 */
+export function formatSessionList(sessions: Array<{ id: string; label: string }>): string {
+  return sessions.map((s) => `• ${s.label}`).join("\n");
+}
+
+/** 更新启动脚本 PI_SESSION 并重启桥（延迟 2s 确保确认回复已发出；失败仅记日志）。 */
+export function scheduleBridgeRestart(sessionId: string, label: string): void {
+  const script = "/usr/local/bin/pi-discord-start.sh";
+  const cmd = `sed -i 's/^PI_SESSION=.*/PI_SESSION=${sessionId}/' ${script} && systemctl restart pi-discord`;
+  setTimeout(() => {
+    execFile("sudo", ["bash", "-c", cmd], { timeout: 30_000 }, (err) => {
+      if (err) console.error("[pi-discord-openclaw] /resume 重启失败:", err.message);
+      else console.log(`[pi-discord-openclaw] /resume → 会话 ${label} 已排定重启`);
+    });
+  }, 2_000);
 }
 
 /** 全部命令的 help 列表（essential 简表 + 全部详细表）。 */
@@ -235,7 +287,7 @@ export async function executeCommand(
           const m = f.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_[0-9a-f-]+)\.jsonl$/);
           return `• ${m ? m[1].replace("T", " ").replace("-", ":") : f}`;
         });
-        return reply([`📁 **会话文件（最近 ${lines.length} 个）**：`, ...lines, "💡 切换会话请在终端执行 /resume（上游 API 仅命令 ctx 可用）"].join("\n"), false);
+        return reply([`📁 **会话文件（最近 ${lines.length} 个）**：`, ...lines, "💡 恢复会话：/resume <id>（Discord 远程重启恢复，约 15s）"].join("\n"), false);
       } catch (err) {
         return reply(`❌ /sessions 读取失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -373,8 +425,48 @@ export async function executeCommand(
       return reply(TERMINAL_ONLY("fork", "<entryId>"));
     case "clone":
       return reply(TERMINAL_ONLY("clone"));
-    case "resume":
-      return reply(TERMINAL_ONLY("resume", "<session>"));
+    case "resume": {
+      // 笔记 36：Discord 远程恢复会话——列出/匹配会话，改启动脚本 PI_SESSION + 重启桥（Restart=always 自动恢复）。
+      // 无需终端 /resume；重启约 15s，上下文不丢（--session 启动参数恢复）。
+      const target = (rawArgs ?? "").trim();
+      const currentId = ctx?.getSessionInfo()?.sessionId;
+      try {
+        if (!target) {
+          const recent = await listRecentSessions(10);
+          if (recent.length === 0) return reply("📁 暂无会话文件。");
+          return reply(
+            [
+              "📁 **最近会话**（/resume <id> 恢复，约 15s 重启）:",
+              formatSessionList(recent),
+              "💡 id 可用前缀（如 019fd56d 或 2026-08-06T04），/resume last 恢复最近一个",
+            ].join("\n"),
+            false,
+          );
+        }
+        if (target === "last") {
+          const recent = await listRecentSessions(2);
+          if (recent.length === 0) return reply("📁 暂无会话文件。");
+          const pick = recent.find((s) => s.id !== currentId) ?? recent[0];
+          if (pick.id === currentId) return reply("✅ 已在当前会话。");
+          scheduleBridgeRestart(pick.id, pick.label);
+          return reply(`♻️ 正在恢复会话 ${pick.label}… bot 将重启（约 15s），恢复后上下文完整。`, false);
+        }
+        const matches = await findSessionsByPrefix(target);
+        if (matches.length === 0) return reply(`❌ 未找到匹配 ` + target + ` 的会话（/resume 查看列表）。`);
+        if (matches.length > 1) {
+          return reply(
+            [`⚠️ 匹配到 ${matches.length} 个会话，请用更精确的前缀：`, formatSessionList(matches)].join("\n"),
+            false,
+          );
+        }
+        const pick = matches[0];
+        if (pick.id === currentId) return reply("✅ 已在当前会话。");
+        scheduleBridgeRestart(pick.id, pick.label);
+        return reply(`♻️ 正在恢复会话 ${pick.label}… bot 将重启（约 15s），恢复后上下文完整。`, false);
+      } catch (err) {
+        return reply(`❌ /resume 执行失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     case "reload": {
       // 热重载扩展/skills/prompts/themes（需环境变量 RELOAD_ALLOWED=1 才允许远程触发，默认关闭）
       if (process.env.RELOAD_ALLOWED !== "1") {

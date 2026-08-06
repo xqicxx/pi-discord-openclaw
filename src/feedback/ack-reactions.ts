@@ -20,7 +20,7 @@ export const STATUS_EMOJIS = {
   deploy: "🛫",
   build: "🏗️",
   concierge: "💁",
-  done: "✅",
+  done: "✓",
   error: "❌",
   stallSoft: "⏳",
   stallHard: "⚠️",

@@ -499,6 +499,23 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
       category: "session",
       tier: "standard",
     }),
+    // 笔记 36：/resume 远程恢复会话（Discord 可用：改启动脚本 PI_SESSION + 重启桥自动恢复）
+    defineChatCommand({
+      key: "resume",
+      nativeName: "resume",
+      description: "Restore a session from Discord (list / <id|prefix> / last; ~15s restart, context preserved).",
+      category: "session",
+      tier: "standard",
+      args: [
+        {
+          name: "session",
+          description: "Session id/prefix to restore, or last (empty = list recent)",
+          type: "string",
+          required: false,
+          captureRemaining: true,
+        },
+      ],
+    }),
     // 笔记 26：/todos 本地实现（方案二——TUI 命令远程不可用，桥接层直接读写存储）
     defineChatCommand({
       key: "todos",

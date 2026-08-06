@@ -46,11 +46,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait(20);
   ctl.setTool();     // 🛠️ debounce
   await wait(20);
-  await ctl.setDone(); // ✅ 终态（finishWithEmoji）
-  assert(set.join(',') === '⏳,🧠,🛠️,✅', `状态转移表情：${set.join(' → ')}`);
-  assert(removed.join(',') === '⏳,🧠,🛠️', '终态移除除 ✅ 外全部（keepEmoji）');
+  await ctl.setDone(); // ✓ 终态（finishWithEmoji）
+  assert(set.join(',') === '⏳,🧠,🛠️,✓', `状态转移表情：${set.join(' → ')}`);
+  assert(removed.join(',') === '⏳,🧠,🛠️', '终态移除除 ✓ 外全部（keepEmoji）');
   assert(ctl.isFinished() === true, 'done 后 finished');
-  assert(ctl.activeEmoji() === '✅', '终态 = ✅');
+  assert(ctl.activeEmoji() === '✓', '终态 = ✓');
 }
 
 // 3b. 快速连续状态调用：全部立即应用（笔记 31 起 setThinking/setTool 改 immediate，
@@ -63,7 +63,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   ctl.setTool();     // 🛠️ 立即
   await wait(40);
   await ctl.setDone();
-  assert(set.join(',') === '⏳,🧠,🛠️,✅', '快速连续调用立即应用（immediate + 去重）');
+  assert(set.join(',') === '⏳,🧠,🛠️,✓', '快速连续调用立即应用（immediate + 去重）');
 }
 
 // 4. error 路径：→ ❌ + 终态保护（后续 setThinking 被忽略）
@@ -88,7 +88,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(removed.join(',') === '🧠' && ctl.activeEmoji() === '', 'clear 移除活跃表情');
 }
 
-// 6. restoreInitial：回到 👀（openclaw 完成但保留 ack 语义）
+// 6. restoreInitial：回到 queued（⏳）——保留 ack 语义（仅供显式回退排队态的场景）
 {
   const set = []; const removed = [];
   const ctl = createStatusReactionController({ adapter: { setReaction: async (e) => set.push(e), removeReaction: async (e) => removed.push(e) }, timing: { debounceMs: 5 } });

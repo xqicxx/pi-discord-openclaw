@@ -73,3 +73,6 @@ message-handler.preflight：消息处理早期检查 isAbortRequestText，
    （stop/停止/暂停/abort/exit/...）→ bridge.abortCurrentTurn() + 回复「已中止」+ 不进 agent
 3. watchdog 优化：90s → 180s（thinking max 长思考不误杀），abort 时真正中断
 4. 队列清理：abort 后丢弃 pi 侧排队 followUp（pi 无清队列 API，靠 ctx.abort + 后续消息正常处理）
+   > TODO（任务 3，2026-08-06）：pi ExtensionAPI 目前仅提供 sendUserMessage(content,{deliverAs:"steer"|"followUp"})，
+   > followUp 队列（agent-session 内部 _followUpMessages）无公开清理入口。若未来 pi 提供队列清理 API，
+   > 应在 abort 路径调用以彻底丢弃积压 followUp（当前靠 ctx.abort + 后续消息正常消费兜底）。

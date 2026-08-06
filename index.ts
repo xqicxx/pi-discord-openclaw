@@ -43,6 +43,7 @@ import { DiscordGateway } from "./src/transport/discord-gateway.ts";
 import { OpenclawBridge, type DiscordDelivery } from "./src/dispatch/dispatch.ts";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { resolveTextCommand } from "./src/commands/text-commands.ts";
+import { isAbortRequestText } from "./src/interrupt/abort-triggers.ts";
 import {
   findCommandByNativeName,
   type CommandExecutionCtx,
@@ -72,35 +73,9 @@ import {
 
 const TAG = "[pi-discord-openclaw]";
 
-// 笔记 28：abort 触发词（移植 openclaw abort-primitives.ts ABORT_TRIGGERS）——
+// 笔记 28：abort 触发词识别已提取至 src/interrupt/abort-triggers.ts（可单测；
+// 顺带修复原 `/s+/g` 丢失反斜杠的 bug——英文触发词 stop/abort 等此前归一化后永远不命中）。
 // 用户发「停止/暂停/stop/abort」等时直接中断当前任务，不进 agent。
-const ABORT_TRIGGERS = new Set([
-  "stop", "esc", "abort", "exit", "interrupt", "halt",
-  "detente", "deten", "detén", "arrete", "arrête",
-  "停止", "停下来", "暂停", "やめて", "止めて", "रुको", "توقف",
-  "стоп", "остановись", "останови", "остановить", "прекрати",
-  "anhalten", "aufhören", "hoer auf", "stopp", "pare",
-  "stop openclaw", "openclaw stop", "stop action", "stop current action",
-  "stop run", "stop current run", "stop agent", "stop the agent",
-  "stop don't do anything", "stop dont do anything",
-  "stop do not do anything", "stop doing anything",
-  "do not do that", "please stop", "stop please",
-]);
-const TRAILING_ABORT_PUNCTUATION_RE = /[.!?！？…,，。;；:：'"’")\]\}]+$/u;
-
-/** 归一化触发词（小写、去尾部标点、空白折叠）。 */
-function normalizeAbortTriggerText(text: string): string {
-  return (text ?? "").toLowerCase().replace(/s+/g, " ").replace(TRAILING_ABORT_PUNCTUATION_RE, "").trim();
-}
-
-/** 是否 abort 触发消息（openclaw isAbortRequestText 语义：/stop 或触发词）。 */
-function isAbortRequestText(text: string): boolean {
-  if (!text) return false;
-  const normalized = text.trim();
-  const lower = normalized.toLowerCase();
-  if (lower === "/stop") return true;
-  return ABORT_TRIGGERS.has(normalizeAbortTriggerText(lower));
-}
 
 /** 延迟（openclaw sleep；表情终态 hold 用）。 */
 function sleepMs(ms: number): Promise<void> {
@@ -330,6 +305,8 @@ export default function (pi: ExtensionAPI) {
   // 笔记 30：错误通知——关键错误发到 discord 频道（不再静默）。
   // 限频：30s 窗口内最多 1 条，避免错误风暴刷屏。
   let lastErrorNoticeAt = 0;
+  // 笔记 36：上下文阈值提醒限频（10 分钟 1 次，避免每 turn 刷屏）。
+  let lastCtxWarnAt = 0;
   function notifyError(title: string, error: unknown): void {
     const now = Date.now();
     if (now - lastErrorNoticeAt < 30_000) return;
@@ -768,6 +745,15 @@ export default function (pi: ExtensionAPI) {
   pi.on("input", (_event, ctx) => {
     captureCtx(ctx);
   });
+  // 笔记 36：provider 耗时日志（卡顿 issue #97 定位用；before→after 按顺序配对，agent 串行调用）
+  let lastProviderRequestAt = 0;
+  pi.on("before_provider_request", () => {
+    lastProviderRequestAt = Date.now();
+  });
+  pi.on("after_provider_response", (event) => {
+    const ms = Date.now() - lastProviderRequestAt;
+    console.log(`provider 响应 HTTP ${event.status}：${ms}ms`);
+  });
   pi.on("turn_start", (_event, ctx) => {
     captureCtx(ctx);
   });
@@ -870,6 +856,21 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_end", (_event, ctx) => {
     captureCtx(ctx);
+    // 笔记 36：上下文阈值提醒（>80% 提示 /compact，防膨胀卡顿——issue #97/#38）
+    try {
+      const usage = ctx.getContextUsage();
+      if (usage?.percent && usage.percent >= 80 && Date.now() - lastCtxWarnAt > 10 * 60_000) {
+        lastCtxWarnAt = Date.now();
+        const chatId = lastActiveChannelId;
+        if (chatId) {
+          void rest
+            .createChannelMessage(chatId, {
+              content: `⚠️ **上下文使用已达 ${usage.percent}%**（${usage.tokens}/${usage.contextWindow}）— 回复延迟会明显增加，建议 /compact。`,
+            })
+            .catch(() => {});
+        }
+      }
+    } catch { /* 忽略 usage 读取失败 */ }
     // 笔记 32：先 await endTurn（回答正文最终 flush 完成）再进入终态表情——
     // 旧实现 void 不等待，setDone 在回答还在 throttle 分块发送时就执行，
     // removeActiveEmojis 把 🧠/👀 全删，用户看到「回复还在输出、表情已经掉了」。
@@ -879,17 +880,16 @@ export default function (pi: ExtensionAPI) {
       } catch {
         // 忽略 endTurn 失败（回答投递失败由 draft-stream 层处理）
       }
-      // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
+      // 笔记 23/35：完成 → ✓ 常驻表示完成（openclaw 终态常驻语义，不再回 ⏳ 排队态）；
+      // 仅显式 removeAckAfterReply=true 时才 hold 后全清。
       const reactions = activeReactions;
       const srCfg = cfg.statusReactions;
       if (reactions && srCfg?.enabled !== false) {
         try {
           await reactions.setDone();
-          if (srCfg?.removeAckAfterReply !== false) {
+          if (srCfg?.removeAckAfterReply === true) {
             await sleepMs(STATUS_TIMING.doneHoldMs);
             await reactions.clear();
-          } else {
-            await reactions.restoreInitial();
           }
         } catch {
           // 忽略表情清理失败（重试机制在状态机内）
@@ -1175,15 +1175,12 @@ export default function (pi: ExtensionAPI) {
   gateway.events.on("fatal", (code) => {
     console.error(`${TAG} Gateway fatal（code=${code}）：检查 token/intents/权限`);
     notifyError("Discord Gateway 断连", `code=${code}，检查 token/intents/权限`);
-    // 笔记 23/31：错误 → ❌；笔记 35：跟随 removeAckAfterReply（openclaw 原版语义）——
-    // 默认（false）restoreInitial 回到 ⏳，保留 ack；显式 true 才全清。
+    // 笔记 23/35：错误 → ❌ 常驻（终态语义，与完成 ✓ 一致）；显式 true 才全清。
     void (async () => {
       await activeReactions?.setError();
-      if (cfg.statusReactions?.removeAckAfterReply !== false) {
+      if (cfg.statusReactions?.removeAckAfterReply === true) {
         await sleepMs(STATUS_TIMING.errorHoldMs);
         await activeReactions?.clear();
-      } else {
-        await activeReactions?.restoreInitial();
       }
     })();
   });
