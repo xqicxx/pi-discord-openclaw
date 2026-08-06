@@ -61,6 +61,7 @@ export function mountOpenclawBridge(
       toolProgressEnabled: styleConfig.toolProgress.enabled,
       debounceMs: styleConfig.inbound.debounceMs,
       thinkingEnabled: styleConfig.streaming.thinking,
+      thinkingMaxChars: styleConfig.streaming.thinkingMaxChars,
       receiptSummary: styleConfig.streaming.receiptSummary,
     },
   });

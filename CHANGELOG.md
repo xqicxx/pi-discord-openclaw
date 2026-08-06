@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.21: 🌐 误报修复——没搜网不再挂地球（bare-word → 只认真实调用形态）
+
+- `Bugfix`: **没搜网也挂 🌐**（用户实锤）——笔记 33 的 WEB_ARGS_RE 是 bare-word 匹配，而 fabric_exec 的 args 是 TS 源码：源码里**提过** web_search/firecrawl/tavily/bing 等字样（grep 模式、注释、工具清单、测试用例）就误判成搜索。修复：`argsHaveWebSignal` 只认调用形态——①调用语法 `web_search(` / `webSearch(` / `web_fetch_exa(` / `firecrawl.scrape(` / `agent_browser(` / `search_web(`；②具名访问 `extensions.web_search` / `mcp.exa` / `mcp.firecrawl` / `mcp.tavily`；③搜索引擎 URL（google.com(/search)/duckduckgo.com/bing.com）；④agent-reach CLI 命令。删除全部 bare-word 分支。
+- `Tests`: 新增 7c 回归——grep 模式/注释/工具清单提词 → 💻（不挂 🌐）；真实调用（URL/CLI/调用语法/MCP）→ 🌐。ack-reactions 25 pass / 4 fail（4 fail 为既有遗留，见 0.1.20），typecheck 无新增错误。
+
+## 0.1.20: 联网地球 🌐 识别升级 + ⚠️ 警告「误报 / 不解除」双修复（openclaw 调研笔记 33）
+
+- `Feature`: **fabric_exec 内部联网 → 🌐**——tool_execution_start 把 `event.args` 透传给 setTool（此前只传工具名，args 检测形同虚设）。fabric_exec 是容器工具，名字永远识别不出联网，只有 args.code 里的 web 调用痕迹（web_search/exa/firecrawl/tavily）能兜住；WEB_ARGS_RE 扩充 firecrawl|tavily|exa.web|web_fetch_exa。
+- `Bugfix`: **⚠️ 不解除**——stall 表情只增不减：一旦挂上，后续恢复活动只 add 新表情，⚠️ 残留到终态。修复：resetStallTimers（每次新活动触发）把已挂着的 ⏳/⚠️ 立即移除（removeEmoji 幂等安全）。
+- `Bugfix`: **正常执行误报 ⚠️**——fabric_exec 单次调用执行 30-60s（内部多轮联网）期间 pi 侧无任何事件，30s 硬阈值必误报。修复：长任务/联网工具（fabric_exec/subagent/workflow/web 信号）stall 窗口放宽 soft 3x / hard 4x（30s/120s）；真卡死仍触发 ⚠️（卡死检测不失效）。
+- `Bugfix`: 全局正则（WEB_ARGS_RE/LONG_RUNNING_TOOL_RE 带 g flag）连续 test() 的 lastIndex 串台——同一次任务多个工具互相污染识别结果。修复：test 前重置 lastIndex。
+- `Tests`: 新增 7b（args→🌐 分类）、8b（stall 恢复移除）、8c（长任务窗口不误报 + 超长仍 ⚠️）。ack-reactions 24 pass / 4 fail（基线 19/4，4 fail 为既有遗留 queued=⏳ vs 期望 👀，笔记 32 已记载），typecheck 无新增错误。
+- `Research`: docs/openclaw-research/33-tool-emoji-and-stall-warning.md — 三症状根因调研与修复验证。
+
+## 0.1.19: 表情「回复时掉 / 完成时不消」双修复（openclaw 调研笔记 32）
+
+- `Bugfix`: **完成但 emoji 没消失**——`removeActiveEmojis`/`removeEmoji` 的 `finally` 无条件删本地 `activeEmojis`：`removeReaction` API 失败（429 限流/网络抖动）时 Discord 上表情还挂着、本地集合已删 → `clear()` 永不重试 → 永久残留。修复：删除成功才删集合，失败保留 + 重试一次 + `console.warn` 日志（可诊断）。
+- `Bugfix`: **回复时 emoji 掉了**——`agent_end` 里 `void bridge.endTurn()` 不等待：回答正文还在 throttle（500ms）分块发送时 `setDone()` 已执行，`removeActiveEmojis` 把 🧠/👀 全删（「回复还在输出、表情已经没了」）。修复：先 `await bridge.endTurn()`（回答最终 flush 完成）再进入终态表情。
+- `Tests`: 复现测试验证——删除失败重试成功（⏳🧠 最终被删）、连续失败集合保留（可再次清理）。全量 18 测试文件与改动前一致（ack-reactions 4 fail / progress-lane 1 fail 为既有遗留），typecheck 无新增错误。
+- `Research`: docs/openclaw-research/32-emoji-drop-and-residue.md — 两症状根因调研（agent_end 时序竞争 + 删除失败静默残留）与修复验证。
+
+ 表情生命周期重构 + 思考标签真实性（openclaw 调研笔记 31）
+
+- `Bugfix`: **表情错位/残留根因**——旧实现每次收到消息都重建 `statusReactions` controller 并覆盖旧引用：bot 思考/操作中用户新发消息时，全局 thinking/tool 事件会把 🧠/🛠️ 错挂到新消息（「没思考却有思考标签」），旧消息的 controller 被丢弃后 ⏳👀🧠🛠️ 永久残留。
+- `Lifecycle`: 重构为 `activeReactions`（当前 turn 消息的状态机）+ `queuedReactions`（turn 活跃时的新消息只标 ⏳=排队，不进状态机）——对齐 openclaw 每条消息独立 reaction runtime 的生命周期；agent_start 时队首升级为 active（⏳→👀），agent_end/fatal/abort 终态必清理，turn 消息收尾后释放 active。
+- `Thinking Truth`: message_update 空 thinking delta 不触发 🧠；thinking_end 总内容 < 20 字符（模型形式化思考）→ `removeThinkingNow()` 立即移除 🧠（新增方法，跳过 1.5s 防抖）——「没思考却有思考标签」的内容侧修复。
+- `Uncouple`: 思维行字符预算独立为 `streaming.thinkingMaxChars`（默认 120，openclaw progress.maxLineChars），不再复用 maxLineChars——配置 40 时思考行被切碎（观感生硬）的问题消除。
+- `Research`: docs/openclaw-research/31-status-reactions-lifecycle.md — openclaw 原版调研（每条消息独立 controller、finish 必 restoreInitial/setDone、中间表情 debounce 700ms、新版本 Discord 用 embed + accentColor + components 提升视觉）。
+- `Lifecycle`: 补充「存活信号」三件套——
+  - `Stall Truth`: `setThinking(countsAsActivity?)`——思考对用户不可见（streaming.thinking:false 或 reasoning.enabled:false）时 thinking_delta 不再重置 stall 计时（否则被高频 delta 永远重置），10s ⏳ / 30s ⚠️ 照常出现，用户能分辨「还在跑 vs 卡死」。
+  - `Typing Heartbeat`: 思考期间持续发 typing（即使思考行被关闭）——「还活着」的可见信号（节流 10s 复用）。
+  - `Restart Notice`: 停机时（SIGTERM/SIGHUP，覆盖 tmux kill-server 场景）尽力发「🔄 服务重启中…」；启动时总是发「✅ 服务已重新上线」（异常退出则提示任务中断）——更新代码重启后 Discord 那边不再「分不清死活」。
+- `Tests`: ack-reactions.test 新增 removeThinkingNow（立即移除/无重复移除）与 removeThinking（防抖窗口内不移除/防抖后移除）用例 + stall 可见性联动（思考不可见时 ⏳⚠️ 照常触发 / 可见时重置）。Impact: 全量 18 测试文件，失败集与改动前一致（2 个既有 flaky/遗留用例），typecheck 无新增错误。
+
 ## 0.1.17: 修复长回复分块切断代码围栏（Issue #4）
 
 - `Chunk Fence-Aware`: `chunkDiscordText`（src/dispatch/markdown-tables.ts）升级为真正的围栏感知——围栏块（``` / ~~~ 配对）作为最小不可分单元整体保留，表格转换器输出的 ```+ASCII表格+``` 永远不会被切断；非围栏内容按行边界分块；段落超限时内部行切（行完整优先），超长行才硬切 fallback。未闭合围栏也整体保留（避免孤立围栏）。
