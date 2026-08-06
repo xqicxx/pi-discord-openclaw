@@ -854,26 +854,37 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("agent_end", (_event, ctx) => {
     captureCtx(ctx);
-    void bridge.endTurn();
-    // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
-    const reactions = activeReactions;
-    const srCfg = cfg.statusReactions;
-    if (reactions && srCfg?.enabled !== false) {
-      void (async () => {
-        await reactions.setDone();
-        if (srCfg?.removeAckAfterReply !== false) {
-          await sleepMs(STATUS_TIMING.doneHoldMs);
-          await reactions.clear();
-        } else {
-          await reactions.restoreInitial();
+    // 笔记 32：先 await endTurn（回答正文最终 flush 完成）再进入终态表情——
+    // 旧实现 void 不等待，setDone 在回答还在 throttle 分块发送时就执行，
+    // removeActiveEmojis 把 🧠/👀 全删，用户看到「回复还在输出、表情已经掉了」。
+    void (async () => {
+      try {
+        await bridge.endTurn();
+      } catch {
+        // 忽略 endTurn 失败（回答投递失败由 draft-stream 层处理）
+      }
+      // 笔记 23：完成 → ✅（终态 hold 后 clear 或 restoreInitial，openclaw finally 语义）
+      const reactions = activeReactions;
+      const srCfg = cfg.statusReactions;
+      if (reactions && srCfg?.enabled !== false) {
+        try {
+          await reactions.setDone();
+          if (srCfg?.removeAckAfterReply !== false) {
+            await sleepMs(STATUS_TIMING.doneHoldMs);
+            await reactions.clear();
+          } else {
+            await reactions.restoreInitial();
+          }
+        } catch {
+          // 忽略表情清理失败（重试机制在状态机内）
         }
         // 笔记 31：turn 消息收尾完成 → 释放 active（下一条消息重新绑定）。
         // 条件守卫：期间若已被新 turn 的 agent_start 换绑，不误清新 controller。
         if (activeReactions === reactions) activeReactions = undefined;
-      })();
-    } else {
-      activeReactions = undefined;
-    }
+      } else {
+        activeReactions = undefined;
+      }
+    })();
   });
 
   // 连接 Gateway；ready 后注册 slash 命令（笔记 20/21：

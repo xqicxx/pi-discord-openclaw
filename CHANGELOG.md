@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.18: 表情生命周期重构 + 思考标签真实性（openclaw 调研笔记 31）
+## 0.1.19: 表情「回复时掉 / 完成时不消」双修复（openclaw 调研笔记 32）
+
+- `Bugfix`: **完成但 emoji 没消失**——`removeActiveEmojis`/`removeEmoji` 的 `finally` 无条件删本地 `activeEmojis`：`removeReaction` API 失败（429 限流/网络抖动）时 Discord 上表情还挂着、本地集合已删 → `clear()` 永不重试 → 永久残留。修复：删除成功才删集合，失败保留 + 重试一次 + `console.warn` 日志（可诊断）。
+- `Bugfix`: **回复时 emoji 掉了**——`agent_end` 里 `void bridge.endTurn()` 不等待：回答正文还在 throttle（500ms）分块发送时 `setDone()` 已执行，`removeActiveEmojis` 把 🧠/👀 全删（「回复还在输出、表情已经没了」）。修复：先 `await bridge.endTurn()`（回答最终 flush 完成）再进入终态表情。
+- `Tests`: 复现测试验证——删除失败重试成功（⏳🧠 最终被删）、连续失败集合保留（可再次清理）。全量 18 测试文件与改动前一致（ack-reactions 4 fail / progress-lane 1 fail 为既有遗留），typecheck 无新增错误。
+- `Research`: docs/openclaw-research/32-emoji-drop-and-residue.md — 两症状根因调研（agent_end 时序竞争 + 删除失败静默残留）与修复验证。
+
+ 表情生命周期重构 + 思考标签真实性（openclaw 调研笔记 31）
 
 - `Bugfix`: **表情错位/残留根因**——旧实现每次收到消息都重建 `statusReactions` controller 并覆盖旧引用：bot 思考/操作中用户新发消息时，全局 thinking/tool 事件会把 🧠/🛠️ 错挂到新消息（「没思考却有思考标签」），旧消息的 controller 被丢弃后 ⏳👀🧠🛠️ 永久残留。
 - `Lifecycle`: 重构为 `activeReactions`（当前 turn 消息的状态机）+ `queuedReactions`（turn 活跃时的新消息只标 ⏳=排队，不进状态机）——对齐 openclaw 每条消息独立 reaction runtime 的生命周期；agent_start 时队首升级为 active（⏳→👀），agent_end/fatal/abort 终态必清理，turn 消息收尾后释放 active。

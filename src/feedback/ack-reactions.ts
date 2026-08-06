@@ -201,12 +201,21 @@ export function createStatusReactionController(params: StatusReactionControllerO
     if (!adapter.removeReaction) return;
     for (const emoji of Array.from(activeEmojis)) {
       if (emoji === options.keepEmoji) continue;
+      // 笔记 32：删除失败时**保留在 activeEmojis 集合中**（不 finally 删除）——
+      // 否则 Discord 上表情还挂着、本地集合已删 → clear() 永不重试 → 永久残留。
+      // 重试一次；仍失败则记日志（表情残留但可诊断）。
       try {
         await adapter.removeReaction(emoji);
+        activeEmojis.delete(emoji);
       } catch (err) {
         if (onError) onError(err);
-      } finally {
-        activeEmojis.delete(emoji);
+        try {
+          await adapter.removeReaction(emoji);
+          activeEmojis.delete(emoji);
+        } catch (err2) {
+          if (onError) onError(err2);
+          console.warn("[ack-reactions] removeReaction 失败，表情可能残留:", emoji, (err2 as Error)?.message ?? String(err2));
+        }
       }
     }
   }
@@ -256,15 +265,15 @@ export function createStatusReactionController(params: StatusReactionControllerO
     scheduleEmoji(emojis.queued, { immediate: true });
   }
 
-  /** 移除指定表情（如已添加）。 */
+  /** 移除指定表情（如已添加）。失败时保留在集合中，后续终态清理会重试。 */
   async function removeEmoji(emoji: string): Promise<void> {
     if (!adapter.removeReaction || !activeEmojis.has(emoji)) return;
     try {
       await adapter.removeReaction(emoji);
+      activeEmojis.delete(emoji);
     } catch (err) {
       if (onError) onError(err);
-    } finally {
-      activeEmojis.delete(emoji);
+      console.warn("[ack-reactions] removeEmoji 失败，表情可能残留:", emoji, (err as Error)?.message ?? String(err));
     }
   }
 
