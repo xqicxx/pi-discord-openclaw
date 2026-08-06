@@ -570,6 +570,14 @@ export function buildBuiltinCommands(): ChatCommandDefinition[] {
       category: "status",
       tier: "standard",
     }),
+    // 笔记 37：/context-simple 桥接（pi 终端命令，扩展 API 无远程触发入口，桥侧等价实现）
+    defineChatCommand({
+      key: "context-simple",
+      nativeName: "context-simple",
+      description: "Show a simple context overview (context usage, system prompt, commands, tools).",
+      category: "status",
+      tier: "standard",
+    }),
   ];
   assertCommandRegistry(commands);
   return commands;

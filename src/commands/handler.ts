@@ -424,6 +424,29 @@ export async function executeCommand(
         false,
       );
 
+    // 笔记 37：/context-simple 桥接（pi 终端命令，扩展 API 无远程触发入口，桥侧等价实现）
+    case "context-simple": {
+      if (!ctx) return reply("桥接尚未就绪（无事件上下文），请稍后再试。");
+      const lines: string[] = [];
+      const usage = ctx.getContextUsageText();
+      if (usage) lines.push(`**上下文使用**: ${usage}`);
+      const sysPrompt = pi.getSystemPrompt?.();
+      if (sysPrompt) lines.push(`**系统提示**: ${sysPrompt.slice(0, 500)}${sysPrompt.length > 500 ? "…" : ""}`);
+      const commands = pi.getCommands();
+      if (commands.length > 0) {
+        lines.push(`**命令（${commands.length}）**: ${commands.map((c) => c.name).join(", ")}`);
+      }
+      const activeTools = pi.getActiveTools?.();
+      if (activeTools && activeTools.length > 0) {
+        lines.push(`**活动工具（${activeTools.length}）**: ${activeTools.join(", ")}`);
+      }
+      const allTools = ctx.getAllTools();
+      if (allTools.length > 0) {
+        lines.push(`**全部工具（${allTools.length}）**: ${allTools.join(", ")}`);
+      }
+      return reply(lines.length > 0 ? lines.join("\n") : "（无上下文信息）", false);
+    }
+
     // ---- 写会话命令：引导终端（BACKLOG 约束，上游无 API）----
     case "new":
       return reply(TERMINAL_ONLY("new", "[可选初始化提示]"));
