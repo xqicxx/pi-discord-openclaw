@@ -262,6 +262,8 @@ export class OpenclawBridge {
   onInterrupt?: () => void;
   /** 笔记 36：上下文使用率检查回调（宿主注入，返回使用率文本或 null）。 */
   getContextUsageText?: () => string | null;
+  /** 笔记 37：设置思考级别回调（宿主注入，用于降低 thinking level 减小 TTFT）。 */
+  setThinkingLevel?: (level: string) => void;
 
   /** 用户发消息 → debounce 合并（笔记 04）。 */
   pushUserMessage(text: string, chatId: string): void {
@@ -277,6 +279,8 @@ export class OpenclawBridge {
   beginTurn(params: { chatId: string; messageId?: string }): TurnManager {
     // 笔记 36：上下文使用率过高提醒（>70% 时提示用户 /compact，避免膨胀导致延迟）
     this.checkContextUsage();
+    // 笔记 37：上下文接近阈值时自动降低思考级别（减小 TTFT）
+    this.autoLowerThinking();
     // 笔记 05: isDispatchSuperseded — 新消息取代旧 turn
     if (this.turn && !this.turn.isSuperseded()) {
       this.turn.supersede();
@@ -337,6 +341,21 @@ export class OpenclawBridge {
     const pct = parseInt(match[1], 10);
     if (pct >= threshold * 100) {
       this.config.onContextHighUsage(usageText);
+    }
+  }
+
+  /** 笔记 37：上下文接近阈值时自动降低思考级别（减小 TTFT）。 */
+  private autoLowerThinking(): void {
+    const threshold = this.config.contextHighUsageThreshold ?? 0.7;
+    if (threshold <= 0 || !this.config.setThinkingLevel) return;
+    const usageText = this.getContextUsageText?.();
+    if (!usageText) return;
+    const match = usageText.match(/(\d+)%/);
+    if (!match) return;
+    const pct = parseInt(match[1], 10);
+    // 上下文 >80% 时强制降为 low（若当前高于 low）
+    if (pct >= 80) {
+      this.config.setThinkingLevel("low");
     }
   }
 

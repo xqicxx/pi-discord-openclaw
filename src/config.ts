@@ -84,6 +84,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
   turnWatchdogMs: 90000,
   // 笔记 36：上下文使用率 >70% 时提醒用户 /compact（避免膨胀导致延迟）
   contextHighUsageThreshold: 0.7,
+  // 笔记 37：默认思考级别（大上下文下降低可显著减小 TTFT）
+  defaultThinkingLevel: "low",
   tableMode: "code",
 };
 
