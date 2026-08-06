@@ -197,3 +197,5 @@ npm run validate  # typecheck + test + audit + pack check
 ## License
 
 MIT — forked from [pi-telegram-openclaw](https://github.com/xqicxx/pi-telegram-openclaw) with the transport swapped to Discord while keeping the OpenClaw streaming pipeline intact.
+
+## 测试条目（验证 Code Assist 审核闭环，观察后关闭）
