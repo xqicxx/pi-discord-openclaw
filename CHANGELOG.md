@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.22: 🔁 远程 /resume + ⏸️ abort 触发词 + ✓ 表情终态常驻 + 📊 上下文健康提醒
+
+- `Feature`: **远程 /resume**——Discord 发 `/resume <id>` 重启桥自动恢复历史会话（约 15s，上下文不丢），无需终端；配套只读 `/tree` `/session` `/copy` `/settings` `/export`（issue #97 卡顿调研期间产出）。
+- `Feature`: **abort 触发词**——移植 openclaw `abort-primitives.ts`，40+ 多语言停止词（stop/停止/暂停/やめて/halt…）+ `/stop`，活跃 turn 立即中断、表情清理（笔记 28）。
+- `Feature`: **表情终态 ✓ 常驻**——完成态 ✓ 不再回落 ⏳（对齐 openclaw `removeAckAfterReply=false`），单通道状态机只增不减、终态零残留（笔记 30/35 定稿）。
+- `Feature`: **上下文健康提醒**——每 turn 检查上下文使用率，>70% 提醒 `/compact`（别名 `/compress`），避免膨胀导致卡顿（笔记 36）。
+- `Fix`: 卡顿修复（issue #97）——`contextHighUsageThreshold` 配置 + `onContextHighUsage` 回调，经 PR #98 合入。
+- `Tests`: 新增 interrupt / resume / resume-command 测试；全套 21 files 通过。
+
 ## 0.1.21: 🌐 误报修复——没搜网不再挂地球（bare-word → 只认真实调用形态）
 
 - `Bugfix`: **没搜网也挂 🌐**（用户实锤）——笔记 33 的 WEB_ARGS_RE 是 bare-word 匹配，而 fabric_exec 的 args 是 TS 源码：源码里**提过** web_search/firecrawl/tavily/bing 等字样（grep 模式、注释、工具清单、测试用例）就误判成搜索。修复：`argsHaveWebSignal` 只认调用形态——①调用语法 `web_search(` / `webSearch(` / `web_fetch_exa(` / `firecrawl.scrape(` / `agent_browser(` / `search_web(`；②具名访问 `extensions.web_search` / `mcp.exa` / `mcp.firecrawl` / `mcp.tavily`；③搜索引擎 URL（google.com(/search)/duckduckgo.com/bing.com）；④agent-reach CLI 命令。删除全部 bare-word 分支。
