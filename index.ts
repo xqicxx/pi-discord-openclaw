@@ -131,6 +131,7 @@ function adaptCommandCtx(pi: ExtensionAPI, ctx: ExtensionContext): CommandExecut
       if (!usage) return undefined;
       return `${usage.tokens ?? "?"} / ${usage.contextWindow} tokens (${usage.percent ?? "?"}%)`;
     },
+    getSystemPrompt: () => ctx.getSystemPrompt(),
     listScopedModels: () => ctx.scopedModels.map((entry) => entry.model.id),
     getAllTools: () => pi.getAllTools().map((tool) => tool.name),
     setSessionName: (name) => pi.setSessionName(name),
@@ -323,8 +324,12 @@ export default function (pi: ExtensionAPI) {
   }
 
   const delivery: DiscordDelivery = {
-    sendMessage: async (chatId, text) => {
-      const sent = await rest.createChannelMessage(chatId, { content: text });
+    sendMessage: async (chatId, text, embeds) => {
+      // issue #113：首条发送必须透传 embeds（否则 Embed 表格只在后续编辑时才可能补上）
+      const sent = await rest.createChannelMessage(chatId, {
+        content: text,
+        ...(embeds ? { embeds } : {}),
+      });
       if (!sent.id) throw new Error(`${TAG} sendMessage: no message id`);
       return sent.id;
     },
@@ -371,7 +376,11 @@ export default function (pi: ExtensionAPI) {
         const stripped = stripInlineDirectiveTagsForDelivery(text).text;
         const mode = cfg.tableMode ?? "code";
         if (mode === "embed") {
-          const converted = convertTextWithTables(stripped);
+          const converted = convertTextWithTables(stripped, {
+            color: cfg.embedStyle?.color,
+            imageUrl: cfg.embedStyle?.imageUrl,
+            footerText: cfg.embedStyle?.footerText,
+          });
           if (converted) return { content: converted.content, embeds: converted.embeds };
           // 笔记 30：表格在中间等不适合 embed 的场景（embed 只能在 content 下方）——
           // 回退 bullets（第一列加粗 + 子弹列表），位置正确且不生硬（openclaw 语义）
@@ -630,12 +639,17 @@ export default function (pi: ExtensionAPI) {
     // 「停止/暂停/stop/abort」等 → 中断当前任务，不进 agent
     if (isAbortRequestText(content)) {
       void (async () => {
+        let confirmationSent = false;
         try {
-          await bridge.abortCurrentTurn("🛑 已中止当前任务。");
+          // issue #117：turn 活跃时 abortTurn 内部会向 turn 频道发送确认；
+          // 返回值标记是否已发送，宿主只兜底无活跃 turn 的场景，避免双发。
+          confirmationSent = await bridge.abortCurrentTurn("🛑 已中止当前任务。");
         } catch {
           // 忽略
         }
-        await replyTextCommand(channelId, "🛑 已中止当前任务。");
+        if (!confirmationSent) {
+          await replyTextCommand(channelId, "🛑 已中止当前任务。");
+        }
       })();
       return;
     }
@@ -933,6 +947,8 @@ export default function (pi: ExtensionAPI) {
       // 正常退出由 SIGTERM 钩子清理；崩溃（SIGKILL）残留 → 下次启动再提示
     })();
     if (applicationId) {
+      // 闭包捕获收窄：async 闭包内 let 收窄失效，先固化到 const（typecheck 修复）
+      const appId = applicationId;
       void (async () => {
         let builtins: ChatCommandDefinition[] = [];
         try {
@@ -1079,7 +1095,7 @@ export default function (pi: ExtensionAPI) {
                 return;
               }
             } catch { /* 无缓存文件 */ }
-            const existing = await rest.listApplicationCommands(applicationId);
+            const existing = await rest.listApplicationCommands(appId);
             const existingByName = new Map(existing.map((c) => [c.name, c]));
             const desiredNames = new Set(fullCommands.map((c) => c.name));
             let created = 0;
@@ -1091,10 +1107,10 @@ export default function (pi: ExtensionAPI) {
               for (;;) {
                 try {
                   if (!cur) {
-                    await rest.createApplicationCommand(applicationId, cmd);
+                    await rest.createApplicationCommand(appId, cmd);
                     created += 1;
-                  } else if (!commandsEqual(cur, cmd)) {
-                    await rest.editApplicationCommand(applicationId, cur.id, cmd);
+                  } else if (cur.id && !commandsEqual(cur, cmd)) {
+                    await rest.editApplicationCommand(appId, cur.id, cmd);
                     edited += 1;
                   }
                   break;
@@ -1124,15 +1140,17 @@ export default function (pi: ExtensionAPI) {
             let deleted = 0;
             for (const [name, c] of existingByName) {
               if (desiredNames.has(name)) continue;
-              try {
-                await rest.deleteApplicationCommand(applicationId, c.id);
-                deleted += 1;
-                console.log(`${TAG} 删除多余全局命令 /${name}`);
-              } catch (error) {
-                console.error(
-                  `${TAG} 删除多余全局命令 /${name} 失败：`,
-                  error instanceof Error ? error.message : String(error),
-                );
+              if (c.id) {
+                try {
+                  await rest.deleteApplicationCommand(appId, c.id);
+                  deleted += 1;
+                  console.log(`${TAG} 删除多余全局命令 /${name}`);
+                } catch (error) {
+                  console.error(
+                    `${TAG} 删除多余全局命令 /${name} 失败：`,
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
               }
             }
             console.log(
@@ -1162,8 +1180,8 @@ export default function (pi: ExtensionAPI) {
             for (const guild of guilds) {
               void registerCommandsForScope(
                 `guild ${guild.name ?? guild.id}`,
-                () => rest.registerGuildApplicationCommands(applicationId, guild.id, fullCommands),
-                () => rest.listGuildApplicationCommands(applicationId, guild.id),
+                () => rest.registerGuildApplicationCommands(appId, guild.id, fullCommands),
+                () => rest.listGuildApplicationCommands(appId, guild.id),
               );
             }
           } catch (error) {

@@ -19,17 +19,17 @@ export function createDiscordMountDeps(
   };
 
   return {
-    sendMessage: async (text) => {
+    sendMessage: async (text, embeds) => {
       const channelId = await resolveChannelId();
-      const sent = await rest.createChannelMessage(channelId, { content: text });
+      const sent = await rest.createChannelMessage(channelId, { content: text, ...(embeds ? { embeds } : {}) });
       if (!sent.id) {
         throw new Error("discord sendMessage: no message id in response");
       }
       return sent.id;
     },
-    editMessageText: async (messageId, text) => {
+    editMessageText: async (messageId, text, embeds) => {
       const channelId = await resolveChannelId();
-      await rest.editChannelMessage(channelId, messageId, text);
+      await rest.editChannelMessage(channelId, messageId, text, embeds);
     },
     deleteMessage: async (messageId) => {
       const channelId = await resolveChannelId();

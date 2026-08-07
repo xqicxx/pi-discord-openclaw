@@ -62,7 +62,7 @@ export interface OpenclawBridgeConfig {
 }
 
 export interface DiscordDelivery {
-  sendMessage: (chatId: string, text: string) => Promise<string>;
+  sendMessage: (chatId: string, text: string, embeds?: unknown[]) => Promise<string>;
   /** issue 59：编辑透传 embeds。 */
   editMessage: (chatId: string, messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (chatId: string, messageId: string) => Promise<void>;
@@ -97,7 +97,7 @@ export class TurnManager {
     this.turnId = `${params.chatId}:${params.messageId ?? this.startedAt}`;
 
     const transport: DraftTransport = {
-      sendMessage: (text) => params.delivery.sendMessage(params.chatId, text),
+      sendMessage: (text, embeds) => params.delivery.sendMessage(params.chatId, text, embeds),
       editMessage: (messageId, text, embeds) => params.delivery.editMessage(params.chatId, messageId, text, embeds),
       deleteMessage: (messageId) => params.delivery.deleteMessage(params.chatId, messageId),
       sendChatAction: (action) => params.delivery.sendChatAction(params.chatId, action),
@@ -404,24 +404,23 @@ export class OpenclawBridge {
     await this.drainPending();
   }
 
-  /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。
-   *  注意：本方法不保证发送确认消息——
-   *  - 有活跃 turn：abortTurn 内部向 turn.chatId 发送 reason；
-   *  - 无活跃 turn：本层无可信 chatId（debouncer key 可能是任意渠道），只调 onAbort
-   *    （宿主清表情 + 中断 agent）；确认回复由宿主（index.ts abort 拦截路径
-   *    replyTextCommand）负责，避免双发。 */
-  async abortCurrentTurn(reason = "已中止当前任务。"): Promise<void> {
+  /** 笔记 28/issue #117：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。
+   *  返回值：true = 本层已发送确认消息（turn 活跃时 abortTurn 内部发送）；
+   *          false = 未发送（无活跃 turn 时只调 onAbort），由宿主负责确认回复，
+   *          避免宿主与 abortTurn 双发同一条确认。 */
+  async abortCurrentTurn(reason = "已中止当前任务。"): Promise<boolean> {
     if (!this.turn && this.debouncer) {
       // 无活动 turn 时仍走 abort（笔记 30：onAbort 清表情 + 中断 agent）。
-      // 确认消息由 index.ts 的 abort 拦截路径发送（replyTextCommand），这里不重复发送。
+      // 确认消息由 index.ts 的 abort 拦截路径发送（replyTextCommand），这里不发送。
       try {
         this.onAbort?.();
       } catch {
         // 忽略
       }
-      return;
+      return false;
     }
     await this.abortTurn(reason);
+    return true;
   }
 
   /** 连续工具超时检测：超过阈值强制 abort turn。 */

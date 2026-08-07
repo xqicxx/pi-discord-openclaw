@@ -1,6 +1,8 @@
 // 笔记 24 验证：Discord 输出格式化（表格 → 对齐 ASCII 代码块 / 指令标签剥离 / 围栏感知分块）
 import {
   convertMarkdownTables,
+  convertMarkdownTableToEmbed,
+  convertTextWithTables,
   stripInlineDirectiveTagsForDelivery,
   chunkDiscordText,
   DISCORD_TEXT_CHUNK_LIMIT,
@@ -122,3 +124,47 @@ function assert(cond, label) {
 
 console.log(`\nmarkdown-tables tests: ${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);
+
+
+// 10. convertTextWithTables embed 基础结构（issue 59）
+{
+  const md = ['| 岗位 | 人数 |', '| --- | --- |', '| 项目管理 | 1 |'].join(String.fromCharCode(10));
+  const out = convertTextWithTables(md);
+  assert(out !== null, 'embed 模式可转换');
+  const e = out.embeds[0];
+  assert(e.title === '岗位', 'title 取表头第一列（不再笼统"表格"）');
+  assert(e.description === '岗位 | 人数', 'description=完整表头');
+  assert(Array.isArray(e.fields) && e.fields.length === 1, '每行一个 field');
+  assert(e.fields[0].name === '项目管理', 'field name=第一列');
+  assert(e.fields[0].value === '1', 'field value=其余列');
+}
+
+// 11. embed 样式：color / image / footer（窄卡空白修复）
+{
+  const md = ['| 岗位 | 人数 |', '| --- | --- |', '| 项目管理 | 1 |'].join(String.fromCharCode(10));
+  const out = convertTextWithTables(md, {
+    color: 0xeb459e,
+    imageUrl: 'https://example.com/banner.png',
+    footerText: 'test footer',
+  });
+  const e = out.embeds[0];
+  assert(e.color === 0xeb459e, '自定义 color 生效');
+  assert(e.image && e.image.url === 'https://example.com/banner.png', 'imageUrl 附加（占满宽度消空白）');
+  assert(e.footer && e.footer.text === 'test footer', 'footerText 生效');
+}
+
+// 12. 默认样式：品牌蓝 color + 无 image/footer
+{
+  const md = ['| a | b |', '| - | - |', '| 1 | 2 |'].join(String.fromCharCode(10));
+  const e = convertTextWithTables(md).embeds[0];
+  assert(e.color === 0x5865f2, '默认品牌蓝');
+  assert(!e.image && !e.footer, '默认无 image/footer');
+}
+
+// 13. convertMarkdownTableToEmbed 也走 buildRichEmbed
+{
+  const md = ['| 地区 | 岗位 |', '| --- | --- |', '| 开江 | 项目管理 |'].join(String.fromCharCode(10));
+  const out = convertMarkdownTableToEmbed(md, { color: 0x00b87a });
+  assert(out !== null && out.embeds[0].color === 0x00b87a, 'convertMarkdownTableToEmbed 支持样式');
+  assert(out.embeds[0].title === '地区', 'title 语义化');
+}

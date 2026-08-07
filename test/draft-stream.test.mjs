@@ -139,5 +139,25 @@ const WAIT = 400; // > 250ms 最小节流
   assert(edited.length === 1 && edited[0] === 'final answer extended', `stop 后编辑重试成功（实际 ${JSON.stringify(edited)}）`);
 }
 
+// 8. issue #113：embeds 透传——flush 首条发送时把 embeds 传给 transport.sendMessage
+{
+  const sent = [];
+  const s = new DraftStream({ throttleMs: 300, chunkSize: 100, formatText: () => ({
+    content: '非表格文本',
+    embeds: [{ title: '岗位', fields: [{ name: 'a', value: 'b' }] }],
+  }), transport: {
+    sendMessage: async (t, embeds) => { sent.push({ t, embeds }); return 1; },
+    editMessage: async () => {},
+    deleteMessage: async () => {},
+    sendChatAction: async () => {},
+  }});
+  s.update('| 岗位 | 人数 |\n| --- | --- |\n| 项目管理 | 1 |');
+  await new Promise((r) => setTimeout(r, 400));
+  assert(sent.length === 1, 'embeds 场景首条仍发送');
+  assert(Array.isArray(sent[0]?.embeds) && sent[0].embeds.length === 1, `sendMessage 收到 embeds（实际 ${JSON.stringify(sent[0]?.embeds)}）`);
+  assert(sent[0].embeds[0].title === '岗位', 'embed 内容正确');
+  await s.stop();
+}
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail > 0 ? 1 : 0);

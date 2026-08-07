@@ -117,7 +117,10 @@ export function convertMarkdownTables(
  * markdown 表格 → Discord Embed fields（每行一个 field，name=第一列，value=其余列）。
  * 返回 null 表示无表格或表格过大（超过 25 fields 或单格超 1024 字符）。
  */
-export function convertMarkdownTableToEmbed(markdown: string): { embeds: unknown[] } | null {
+export function convertMarkdownTableToEmbed(
+  markdown: string,
+  options?: TableEmbedOptions,
+): { embeds: unknown[] } | null {
   const lines = markdown.split("\n");
   let i = 0;
   while (i < lines.length) {
@@ -134,9 +137,7 @@ export function convertMarkdownTableToEmbed(markdown: string): { embeds: unknown
         fields.push({ name, value, inline: true });
       }
       if (fields.length === 0 || fields.length > 25) return null;
-      // 表头放 description（截断到 4096）
-      const description = block.headers.join(" | ").slice(0, 4096);
-      return { embeds: [{ title: "表格", description, fields }] };
+      return { embeds: [buildRichEmbed(block, fields, options)] };
     }
     i += 1;
   }
@@ -185,8 +186,42 @@ function renderBulletsTable(block: TableBlock): string {
  * - 超出 Discord 限制（>10 embeds / 单表 >25 fields / 单格 >1024 字符 /
  *   合计 >6000 字符）→ 返回 null，调用方回退 ASCII 代码块
  */
+/**
+ * Embed 排版选项（issue：窄卡空白修复）。
+ * - color：左侧色条颜色（默认品牌蓝 0x5865F2）
+ * - imageUrl：附加顶部横幅图 → 卡片占满消息宽度，消除无图窄卡右侧大空白
+ * - footerText：底部提示文案（默认省略）
+ */
+export interface TableEmbedOptions {
+  color?: number;
+  imageUrl?: string;
+  footerText?: string;
+}
+
+/**
+ * 构建带样式的 embed：
+ * - title 用表头第一列（如"地区/岗位"），不再笼统叫"表格"
+ * - 带 color 色条 + 可选 footer + 可选 image（占满宽度）
+ */
+function buildRichEmbed(
+  block: TableBlock,
+  fields: Array<{ name: string; value: string; inline?: boolean }>,
+  options?: TableEmbedOptions,
+): Record<string, unknown> {
+  const embed: Record<string, unknown> = {
+    title: block.headers[0]?.trim() || "表格",
+    description: block.headers.join(" | ").slice(0, 4096),
+    fields,
+    color: options?.color ?? 0x5865f2,
+  };
+  if (options?.footerText) embed.footer = { text: options.footerText };
+  if (options?.imageUrl) embed.image = { url: options.imageUrl };
+  return embed;
+}
+
 export function convertTextWithTables(
   markdown: string,
+  options?: TableEmbedOptions,
 ): { content: string; embeds: unknown[] } | null {
   const lines = markdown.split("\n");
   const out: string[] = [];
@@ -209,8 +244,7 @@ export function convertTextWithTables(
         fields.push({ name, value, inline: true });
       }
       if (fields.length === 0 || fields.length > 25) return null;
-      const description = block.headers.join(" | ").slice(0, 4096);
-      const embed = { title: "表格", description, fields };
+      const embed = buildRichEmbed(block, fields, options);
       const chars = JSON.stringify(embed).length;
       if (totalEmbedChars + chars > 5800) return null; // 6000 留余量
       totalEmbedChars += chars;

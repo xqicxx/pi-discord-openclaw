@@ -8,10 +8,11 @@ import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activi
 
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
 export interface MountDeps {
-  sendMessage: (text: string) => Promise<string>;
-  editMessageText: (messageId: string, text: string) => Promise<void>;
+  sendMessage: (text: string, embeds?: unknown[]) => Promise<string>;
+  editMessageText: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
-  sendChatAction: (action: "typing") => Promise<void>;
+  /** typecheck 修复（issue #115）：与 DiscordDelivery.sendChatAction 签名对齐。 */
+  sendChatAction: (chatId: string, action: "typing") => Promise<void>;
 }
 
 /** activityRuntime 的最小接口（index.ts 传入）。 */
@@ -45,10 +46,10 @@ export function mountOpenclawBridge(
   deps: MountDeps,
 ): MountResult | undefined {
   const delivery: DiscordDelivery = {
-    sendMessage: deps.sendMessage,
-    editMessage: deps.editMessageText,
+    sendMessage: (_chatId, text, embeds) => deps.sendMessage(text, embeds),
+    editMessage: (_chatId, messageId, text, embeds) => deps.editMessageText(messageId, text, embeds),
     deleteMessage: deps.deleteMessage,
-    sendChatAction: deps.sendChatAction,
+    sendChatAction: (chatId, action) => deps.sendChatAction(chatId, action),
   };
   const styleConfig = loadOpenclawStyleConfig();
   const bridge = new OpenclawBridge({

@@ -57,6 +57,8 @@ export interface OpenclawStyleConfig {
   contextHighUsageThreshold?: number;
   /** 表格渲染模式：embed | code | off（默认 code 保持现状）。 */
   tableMode?: "embed" | "code" | "off";
+  /** embed 卡片样式：色条颜色（默认 0x5865F2）与底部文案。 */
+  embedStyle?: { color?: number; footerText?: string; imageUrl?: string };
 }
 
 export const DEFAULTS: OpenclawStyleConfig = {
@@ -85,6 +87,8 @@ export const DEFAULTS: OpenclawStyleConfig = {
   // 笔记 36：上下文使用率 >70% 时提醒用户 /compact（避免膨胀导致延迟）
   contextHighUsageThreshold: 0.7,
   tableMode: "code",
+  // embed 窄卡空白修复：默认品牌蓝色条，可配 imageUrl 占满宽度
+  embedStyle: { color: 0x5865f2, footerText: "pi-discord-openclaw" },
 };
 
 /**

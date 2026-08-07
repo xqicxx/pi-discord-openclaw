@@ -430,7 +430,8 @@ export async function executeCommand(
       const lines: string[] = [];
       const usage = ctx.getContextUsageText();
       if (usage) lines.push(`**上下文使用**: ${usage}`);
-      const sysPrompt = pi.getSystemPrompt?.();
+      // issue #115：getSystemPrompt 在 ExtensionAPI 上不存在，改为从事件 ctx 读取
+      const sysPrompt = ctx.getSystemPrompt?.();
       if (sysPrompt) lines.push(`**系统提示**: ${sysPrompt.slice(0, 500)}${sysPrompt.length > 500 ? "…" : ""}`);
       const commands = pi.getCommands();
       if (commands.length > 0) {
@@ -499,16 +500,9 @@ export async function executeCommand(
       }
     }
     case "reload": {
-      // 热重载扩展/skills/prompts/themes（需环境变量 RELOAD_ALLOWED=1 才允许远程触发，默认关闭）
-      if (process.env.RELOAD_ALLOWED !== "1") {
-        return reply("⚠️ 远程 /reload 未启用。如需从 Discord 热重载，请设置环境变量 RELOAD_ALLOWED=1 后重启服务。");
-      }
-      try {
-        await pi.reload();
-        return reply("♻️ 已热重载扩展/skills/prompts/themes。");
-      } catch (err) {
-        return reply(`❌ /reload 执行失败：${err instanceof Error ? err.message : String(err)}`);
-      }
+      // issue #115：pi 的 reload 只在 ExtensionCommandContext（终端命令上下文）上，
+      // ExtensionAPI 无远程触发入口 → 引导终端执行，不再调用不存在的 pi.reload()
+      return reply(TERMINAL_ONLY("reload"));
     }
     case "login":
       return reply(TERMINAL_ONLY("login", "<provider>"));
