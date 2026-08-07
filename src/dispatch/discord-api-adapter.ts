@@ -19,9 +19,9 @@ export function createDiscordMountDeps(
   };
 
   return {
-    sendMessage: async (text) => {
+    sendMessage: async (text, embeds) => {
       const channelId = await resolveChannelId();
-      const sent = await rest.createChannelMessage(channelId, { content: text });
+      const sent = await rest.createChannelMessage(channelId, { content: text, embeds });
       if (!sent.id) {
         throw new Error("discord sendMessage: no message id in response");
       }

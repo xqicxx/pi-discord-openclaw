@@ -1045,7 +1045,40 @@ export default function (pi: ExtensionAPI) {
             console.log(`${TAG} 已注册 ${fullCommands.length} 个 slash 命令到${scopeLabel}`);
             return true;
           } catch (error) {
-            const detail =
+            // 429 限流：等待 Retry-After 后重试（最多 3 次）
+            const retryAfter = (error as { response?: { headers?: { get?: (name: string) => string | null } } })
+              ?.response?.headers?.get?.("retry-after");
+            const retryMs = retryAfter ? Number(retryAfter) * 1000 : 0;
+            if (attemptsLeft > 1 && retryMs > 0) {
+              console.log(
+                `${TAG} ${scopeLabel} 注册限流，${retryMs}ms 后重试（剩余 ${attemptsLeft - 1} 次）`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, retryMs));
+              return registerCommandsForScope(scopeLabel, put, list, attemptsLeft - 1, retryMs);
+            }
+            console.error(
+              `${TAG} ${scopeLabel} 注册失败：`,
+              error instanceof Error ? error.message : String(error),
+            );
+            return false;
+          }
+        };
+        // 注册到全局和 guild（若配置了 guildId）
+        const globalOk = await registerCommandsForScope(
+          "全局",
+          () => rest.registerApplicationCommands(applicationId, fullCommands),
+          () => rest.listApplicationCommands(applicationId),
+        );
+        if (conn.guildId) {
+          await registerCommandsForScope(
+            `guild ${conn.guildId}`,
+            () => rest.registerGuildApplicationCommands(applicationId, conn.guildId!, fullCommands),
+            () => rest.listGuildApplicationCommands(applicationId, conn.guildId!),
+          );
+        }
+        if (!globalOk) {
+          notifyError("slash 命令注册失败", new Error("全局注册失败"));
+        }st detail =
               error instanceof Error && "body" in error
                 ? JSON.stringify((error as { body?: unknown }).body)
                 : undefined;
