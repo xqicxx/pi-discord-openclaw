@@ -43,12 +43,12 @@ const rest = new DiscordRest({ token: 'tok', fetch: async (url, init) => {
   assert(calls[0].method === 'DELETE' && calls[0].url.endsWith('/messages/m42'), 'deleteMessage DELETE 正确消息');
 }
 
-// 4. sendChatAction：PUT /channels/{id}/typing
+// 4. sendChatAction：POST /channels/{id}/typing
 {
   calls.length = 0;
   const deps = createDiscordMountDeps(rest, async () => channelId);
   await deps.sendChatAction('typing');
-  assert(calls[0].method === 'PUT' && calls[0].url.endsWith('/typing'), 'sendChatAction → typing PUT');
+  assert(calls[0].method === 'POST' && calls[0].url.endsWith('/typing'), 'sendChatAction → typing POST');
 }
 
 // 5. 无 channelId → 抛错
