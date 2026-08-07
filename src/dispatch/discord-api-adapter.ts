@@ -19,14 +19,15 @@ export function createDiscordMountDeps(
   };
 
   return {
-    sendMessage: async (text, embeds) => {
+    sendMessage: async (text) => {
       const channelId = await resolveChannelId();
-      const sent = await rest.createChannelMessage(channelId, { content: text, embeds });
+      const sent = await rest.createChannelMessage(channelId, { content: text });
       if (!sent.id) {
         throw new Error("discord sendMessage: no message id in response");
       }
       return sent.id;
     },
+    // issue: 透传 embeds，与 DiscordDelivery.editMessage 参数对齐
     editMessageText: async (messageId, text, embeds) => {
       const channelId = await resolveChannelId();
       await rest.editChannelMessage(channelId, messageId, text, embeds);

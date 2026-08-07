@@ -8,7 +8,7 @@ import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activi
 
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
 export interface MountDeps {
-  sendMessage: (text: string, embeds?: unknown[]) => Promise<string>;
+  sendMessage: (text: string) => Promise<string>;
   editMessageText: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   /** typecheck 修复（issue #115）：与 DiscordDelivery.sendChatAction 签名对齐。 */
@@ -47,7 +47,8 @@ export function mountOpenclawBridge(
 ): MountResult | undefined {
   const delivery: DiscordDelivery = {
     sendMessage: deps.sendMessage,
-    editMessage: deps.editMessageText,
+    // issue: 透传 embeds，避免流式编辑时丢失 embed 表格
+    editMessage: (_chatId, messageId, text, embeds) => deps.editMessageText(messageId, text, embeds),
     deleteMessage: deps.deleteMessage,
     sendChatAction: (chatId, action) => deps.sendChatAction(chatId, action),
   };
