@@ -38,12 +38,12 @@ function assert(cond, label) {
   assert(calls[0] === 'DELETE', 'delete 用 DELETE');
 }
 
-// 4. sendChannelTyping → PUT /channels/{id}/typing
+// 4. sendChannelTyping → POST /channels/{id}/typing
 {
   const calls = [];
   const rest = new DiscordRest({ token: 't', fetch: async (url, init) => { calls.push({ url, method: init.method }); return new Response(null, { status: 204 }); }});
   await rest.sendChannelTyping('c1');
-  assert(calls[0].method === 'PUT' && calls[0].url.endsWith('/channels/c1/typing'), 'typing PUT 正确');
+  assert(calls[0].method === 'POST' && calls[0].url.endsWith('/channels/c1/typing'), 'typing POST 正确');
 }
 
 // 5. 429 → 重试（最多 3 次），header retry-after 秒

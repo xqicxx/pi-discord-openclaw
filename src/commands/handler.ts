@@ -501,7 +501,8 @@ export async function executeCommand(
     }
     case "reload": {
       // issue #115：pi 的 reload 只在 ExtensionCommandContext（终端命令上下文）上，
-      // ExtensionAPI 无远程触发入口 → 引导终端执行，不再调用不存在的 pi.reload()
+      // ExtensionAPI 无远程触发入口 → 引导终端执行，不再调用不存在的 pi.reload()。
+      // 上游热重载请在本机 pi 终端执行 /reload（RELOAD_ALLOWED=1 场景同样只在终端生效）。
       return reply(TERMINAL_ONLY("reload"));
     }
     case "login":

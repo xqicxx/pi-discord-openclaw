@@ -248,6 +248,18 @@ export default function (pi: ExtensionAPI) {
   // 避免服务重启后旧方块/表情残留「卡在那以为还在跑」
   const CRASH_MARK = "/tmp/pi-discord-crash-mark";
   const ACTIVE_CH_FILE = "/tmp/pi-discord-active-channel";
+  // 配置校验提前：未配置 token / 未启用 openclawStyle 时直接早退，
+  // 不注册信号处理器、不写崩溃标记（避免 TDZ 和误判崩溃）
+  const conn: DiscordConnectionConfig = loadDiscordConnectionConfig();
+  if (!conn.token) {
+    console.log(`${TAG} 未配置 DISCORD_BOT_TOKEN（discord.json 或环境变量），已跳过`);
+    return;
+  }
+  if (!isOpenclawStyleEnabled()) {
+    console.log(`${TAG} discord.json 未启用 openclawStyle.enabled，已跳过`);
+    return;
+  }
+
   let crashedLastRun = false;
   try {
     if (existsSync(CRASH_MARK)) crashedLastRun = true;
@@ -256,6 +268,9 @@ export default function (pi: ExtensionAPI) {
   // 笔记 31：停机通知——正常重启（更新代码/systemctl restart）也发 Discord 消息，
   // 用户正在使用时不会「分不清 bot 是死了还是重启」。SIGHUP 也处理（tmux kill-server
   // 会给 pi 发 SIGHUP，只监听 SIGTERM 会漏）。尽力而为：3s 兜底强制退出。
+  // 配置校验已在上方提前完成（issue #118），rest 直接 const 初始化——
+  // 闭包内 let 窄化失效导致 6 处 'rest possibly undefined'（issue #115 typecheck）。
+  const rest = new DiscordRest({ token: conn.token });
   const notifyShutdown = (): void => {
     try { rmSync(CRASH_MARK); } catch { /* 忽略 */ }
     const ch = (() => {
@@ -270,18 +285,8 @@ export default function (pi: ExtensionAPI) {
   };
   process.on("SIGTERM", () => notifyShutdown());
   process.on("SIGHUP", () => notifyShutdown());
-  const conn: DiscordConnectionConfig = loadDiscordConnectionConfig();
-  if (!conn.token) {
-    console.log(`${TAG} 未配置 DISCORD_BOT_TOKEN（discord.json 或环境变量），已跳过`);
-    return;
-  }
-  if (!isOpenclawStyleEnabled()) {
-    console.log(`${TAG} discord.json 未启用 openclawStyle.enabled，已跳过`);
-    return;
-  }
 
   const cfg: OpenclawStyleConfig = loadOpenclawStyleConfig();
-  const rest = new DiscordRest({ token: conn.token });
   const gateway = new DiscordGateway({ token: conn.token, intents: DISCORD_INTENTS });
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
@@ -606,7 +611,17 @@ export default function (pi: ExtensionAPI) {
   //     每次收消息都重建 controller 导致的表情错位/残留 bug）
   //   agent_start 时 queued 队首升级为 active；终态（agent_end/abort/错误）必清理
   let activeReactions: StatusReactionController | undefined;
-  const queuedReactions: StatusReactionController[] = [];
+  // 排队消息的 messageId 列表（按 channelId 分组），agent_start 时按合并后的 turn 创建 controller
+  const queuedMessageIds: Array<{ channelId: string; messageId: string }> = [];
+  // 笔记 31：controller 工厂提到 messageCreate 回调外层——messageCreate 与 agent_start
+  // 共用；原定义在回调内导致 agent_start 引用报 TS2304 且运行时 ReferenceError（issue #115）。
+  const makeReactions = (target: { channelId: string; messageId: string }) =>
+    createStatusReactionController({
+      adapter: createDiscordReactionAdapter(rest, target.channelId, target.messageId),
+      enabled: cfg.statusReactions?.enabled ?? true,
+      emojis: cfg.statusReactions?.emojis,
+      timing: cfg.statusReactions?.timing,
+    });
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -692,17 +707,10 @@ export default function (pi: ExtensionAPI) {
     // 笔记 31：turn 活跃（bot 正在思考/操作）时收到的新消息 → 只建排队 controller（⏳=排队中），
     // 不进入状态机——否则全局 thinking/tool 事件会把 🧠/🛠️ 错挂到这条新消息上
     // （「没思考却有思考标签」根因），且旧消息的 controller 被覆盖后表情永久残留。
-    const makeReactions = (target: { channelId: string; messageId: string }) =>
-      createStatusReactionController({
-        adapter: createDiscordReactionAdapter(rest, target.channelId, target.messageId),
-        enabled: cfg.statusReactions?.enabled ?? true,
-        emojis: cfg.statusReactions?.emojis,
-        timing: cfg.statusReactions?.timing,
-      });
+    // 笔记 31 修复：不再为每条消息创建排队 controller（debouncer 合并后 turn 数 < 消息数，
+    // 导致多余 ⏳ 残留）。改为记录 messageId，agent_start 时按合并后的 turn 创建 controller。
     if (activeReactions && !activeReactions.isFinished()) {
-      const queued = makeReactions({ channelId, messageId: message.id });
-      queued.setQueued();
-      queuedReactions.push(queued);
+      queuedMessageIds.push({ channelId, messageId: message.id });
     } else {
       activeReactions = makeReactions({ channelId, messageId: message.id });
       void activeReactions?.setQueued();
@@ -797,12 +805,14 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
-    // 笔记 31：排队消息升级为 active（drain 后开始被处理）——队首消息从 ⏳ 变 👀；
-    // 旧 active 正常路径已 finished/清理，这里兜底 clear（异常路径防残留）
-    if (queuedReactions.length > 0) {
-      const next = queuedReactions.shift()!;
+    // 笔记 31 修复：排队消息升级为 active——从 queuedMessageIds 取队首（对应合并后的 turn），
+    // 创建 controller 并标 ⏳→👀；旧 active 正常路径已 finished/清理，这里兜底 clear。
+    if (queuedMessageIds.length > 0) {
+      const nextTarget = queuedMessageIds.shift()!;
+      const next = makeReactions(nextTarget);
       void activeReactions?.clear().catch(() => {});
       activeReactions = next;
+      void activeReactions?.setQueued();
     }
     // 笔记 30：处理中 👀（与排队 ⏳ 区分）
     void activeReactions?.setWorking();
@@ -947,7 +957,9 @@ export default function (pi: ExtensionAPI) {
       // 正常退出由 SIGTERM 钩子清理；崩溃（SIGKILL）残留 → 下次启动再提示
     })();
     if (applicationId) {
-      // 闭包捕获收窄：async 闭包内 let 收窄失效，先固化到 const（typecheck 修复）
+<<<<<<< HEAD
+      // 闭包捕获收窄：async 闭包内 let 窄化失效，先固化到 const（issue #115 typecheck）
+>>>>>>> origin/master
       const appId = applicationId;
       void (async () => {
         let builtins: ChatCommandDefinition[] = [];

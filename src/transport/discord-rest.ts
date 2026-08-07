@@ -135,9 +135,9 @@ export class DiscordRest {
     await this.request("DELETE", `/channels/${channelId}/messages/${messageId}`);
   }
 
-  /** PUT /channels/{id}/typing — 打字指示。 */
+  /** POST /channels/{id}/typing — 打字指示。 */
   async sendChannelTyping(channelId: Snowflake): Promise<void> {
-    await this.request("PUT", `/channels/${channelId}/typing`);
+    await this.request("POST", `/channels/${channelId}/typing`);
   }
 
   /** PUT /channels/{id}/messages/{mid}/reactions/{emoji}/@me — 添加 reaction（ack/status）。 */

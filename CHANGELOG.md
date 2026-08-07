@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.23: 🛠️ typecheck 恢复 + /reload 引导终端 + abort 确认防双发
+
+- `Fix`: **typecheck 全面恢复（issue #115）**——修复 19 处 TS 错误：`rest`/`applicationId` 闭包窄化失效、`makeReactions` 定义在 messageCreate 回调内却被 agent_start 引用（顺带修掉排队消息升级为 active 时的运行时 ReferenceError）、`/context-simple` 系统提示改从事件 ctx 读取（ExtensionAPI 无 `getSystemPrompt`）、`sendChatAction` 签名对齐；CI 新增 `npm run typecheck` 步骤防回归，Deno 测试文件从 typecheck 与 npm pack 排除。
+- `Fix`: **/reload 不再必崩（issue #115）**——`pi.reload()` 只存在于终端命令上下文，扩展 API 无远程触发入口；改为回复引导在本机 pi 终端执行 `/reload`。
+- `Fix`: **abort 确认消息双发（issue #117）**——`abortCurrentTurn` 返回是否已向 turn 频道发送确认，宿主仅在无活跃 turn 时兜底回复，避免同一条「🛑 已中止」发两次。
+- `Tests`: interrupt 测试新增 abort 返回值断言（有 turn=true / 无 turn=false）。
+
 ## 0.1.22: 🔁 远程 /resume + ⏸️ abort 触发词 + ✓ 表情终态常驻 + 📊 上下文健康提醒
 
 - `Feature`: **远程 /resume**——Discord 发 `/resume <id>` 重启桥自动恢复历史会话（约 15s，上下文不丢），无需终端；配套只读 `/tree` `/session` `/copy` `/settings` `/export`（issue #97 卡顿调研期间产出）。
