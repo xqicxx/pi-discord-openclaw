@@ -47,8 +47,7 @@ export function mountOpenclawBridge(
 ): MountResult | undefined {
   const delivery: DiscordDelivery = {
     sendMessage: deps.sendMessage,
-    // issue: 透传 embeds，避免流式编辑时丢失 embed 表格
-    editMessage: (_chatId, messageId, text, embeds) => deps.editMessageText(messageId, text, embeds),
+    editMessage: (chatId, messageId, text, embeds) => deps.editMessageText(messageId, text, embeds),
     deleteMessage: deps.deleteMessage,
     sendChatAction: (chatId, action) => deps.sendChatAction(chatId, action),
   };

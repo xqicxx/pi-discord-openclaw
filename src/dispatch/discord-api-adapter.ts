@@ -27,7 +27,6 @@ export function createDiscordMountDeps(
       }
       return sent.id;
     },
-    // issue: 透传 embeds，与 DiscordDelivery.editMessage 参数对齐
     editMessageText: async (messageId, text, embeds) => {
       const channelId = await resolveChannelId();
       await rest.editChannelMessage(channelId, messageId, text, embeds);
