@@ -641,7 +641,6 @@ export default function (pi: ExtensionAPI) {
         } catch {
           // 忽略
         }
-        await replyTextCommand(channelId, "🛑 已中止当前任务。");
       })();
       return;
     }
