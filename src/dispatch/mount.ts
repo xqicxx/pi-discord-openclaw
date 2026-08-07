@@ -9,6 +9,7 @@ import { adaptAssistantEvent, type TelegramAssistantStreamEvent } from "./activi
 /** 挂载所需的最小 delivery 能力（来自 fork 的 replyRuntime/outbound）。 */
 export interface MountDeps {
   sendMessage: (text: string) => Promise<string>;
+  /** 透传 embeds 参数，避免编辑时清掉已发送的 Embed 表格 */
   editMessageText: (messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   /** typecheck 修复（issue #115）：与 DiscordDelivery.sendChatAction 签名对齐。 */

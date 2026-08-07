@@ -27,7 +27,7 @@ export function createDiscordMountDeps(
       }
       return sent.id;
     },
-    editMessageText: async (messageId, text, embeds) => {
+    editMessageText: async (messageId, text, embeds?) => {
       const channelId = await resolveChannelId();
       await rest.editChannelMessage(channelId, messageId, text, embeds);
     },
