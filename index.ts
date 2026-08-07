@@ -247,28 +247,8 @@ export default function (pi: ExtensionAPI) {
   // 避免服务重启后旧方块/表情残留「卡在那以为还在跑」
   const CRASH_MARK = "/tmp/pi-discord-crash-mark";
   const ACTIVE_CH_FILE = "/tmp/pi-discord-active-channel";
-  let crashedLastRun = false;
-  try {
-    if (existsSync(CRASH_MARK)) crashedLastRun = true;
-    writeFileSync(CRASH_MARK, String(process.pid));
-  } catch { /* 标记失败不影响主流程 */ }
-  // 笔记 31：停机通知——正常重启（更新代码/systemctl restart）也发 Discord 消息，
-  // 用户正在使用时不会「分不清 bot 是死了还是重启」。SIGHUP 也处理（tmux kill-server
-  // 会给 pi 发 SIGHUP，只监听 SIGTERM 会漏）。尽力而为：3s 兜底强制退出。
-  const notifyShutdown = (): void => {
-    try { rmSync(CRASH_MARK); } catch { /* 忽略 */ }
-    const ch = (() => {
-      try { return readFileSync(ACTIVE_CH_FILE, "utf8").trim() || undefined; } catch { return undefined; }
-    })();
-    if (!ch) { process.exit(0); return; }
-    void rest
-      .createChannelMessage(ch, { content: "🔄 服务重启中，约 15 秒后恢复…" })
-      .catch(() => {})
-      .finally(() => process.exit(0));
-    setTimeout(() => process.exit(0), 3000).unref();
-  };
-  process.on("SIGTERM", () => notifyShutdown());
-  process.on("SIGHUP", () => notifyShutdown());
+  // 配置校验提前：未配置 token / 未启用 openclawStyle 时直接早退，
+  // 不注册信号处理器、不写崩溃标记（避免 TDZ 和误判崩溃）
   const conn: DiscordConnectionConfig = loadDiscordConnectionConfig();
   if (!conn.token) {
     console.log(`${TAG} 未配置 DISCORD_BOT_TOKEN（discord.json 或环境变量），已跳过`);
@@ -279,8 +259,34 @@ export default function (pi: ExtensionAPI) {
     return;
   }
 
+  let crashedLastRun = false;
+  try {
+    if (existsSync(CRASH_MARK)) crashedLastRun = true;
+    writeFileSync(CRASH_MARK, String(process.pid));
+  } catch { /* 标记失败不影响主流程 */ }
+  // 笔记 31：停机通知——正常重启（更新代码/systemctl restart）也发 Discord 消息，
+  // 用户正在使用时不会「分不清 bot 是死了还是重启」。SIGHUP 也处理（tmux kill-server
+  // 会给 pi 发 SIGHUP，只监听 SIGTERM 会漏）。尽力而为：3s 兜底强制退出。
+  // rest 在下方初始化，notifyShutdown 通过闭包引用；早退路径不会注册此处理器。
+  let rest: DiscordRest | undefined;
+  const notifyShutdown = (): void => {
+    try { rmSync(CRASH_MARK); } catch { /* 忽略 */ }
+    const ch = (() => {
+      try { return readFileSync(ACTIVE_CH_FILE, "utf8").trim() || undefined; } catch { return undefined; }
+    })();
+    if (!ch) { process.exit(0); return; }
+    if (!rest) { process.exit(0); return; }
+    void rest
+      .createChannelMessage(ch, { content: "🔄 服务重启中，约 15 秒后恢复…" })
+      .catch(() => {})
+      .finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on("SIGTERM", () => notifyShutdown());
+  process.on("SIGHUP", () => notifyShutdown());
+
   const cfg: OpenclawStyleConfig = loadOpenclawStyleConfig();
-  const rest = new DiscordRest({ token: conn.token });
+  rest = new DiscordRest({ token: conn.token });
   const gateway = new DiscordGateway({ token: conn.token, intents: DISCORD_INTENTS });
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
