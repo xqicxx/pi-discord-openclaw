@@ -56,9 +56,10 @@ function makeDelivery() {
   const bridge = new OpenclawBridge({ delivery, config: BASE_CONFIG });
   bridge.onAbort = () => { aborted++; };
   bridge.beginTurn({ chatId: 'chat1' });
-  await bridge.abortCurrentTurn('🛑 已中止当前任务。');
+  const sentByBridge = await bridge.abortCurrentTurn('🛑 已中止当前任务。');
   assert(aborted === 1, 'onAbort 被调用（真正中断 agent）');
   assert(sent.some((m) => m.chatId === 'chat1' && m.text === '🛑 已中止当前任务。'), '向 turn.chatId 发送确认消息');
+  assert(sentByBridge === true, '有活跃 turn 时返回 true（已发送确认，宿主不再重复发送）');
   assert(bridge.currentTurn() === undefined, 'turn 已清理');
 }
 
@@ -68,9 +69,28 @@ function makeDelivery() {
   const { delivery, sent } = makeDelivery();
   const bridge = new OpenclawBridge({ delivery, config: BASE_CONFIG });
   bridge.onAbort = () => { aborted++; };
-  await bridge.abortCurrentTurn('🛑 已中止当前任务。');
+  const sentByBridge = await bridge.abortCurrentTurn('🛑 已中止当前任务。');
   assert(aborted === 1, '无 turn 时 onAbort 仍被调用');
   assert(sent.length === 0, '本层不发送确认消息（index.ts replyTextCommand 负责，避免双发）');
+  assert(sentByBridge === false, '无活跃 turn 时返回 false（宿主负责确认回复）');
+}
+
+// 3b. abortCurrentTurn：有活跃 turn 但发送失败 → 返回 false（宿主兜底回复，不丢确认）
+{
+  let aborted = 0;
+  const delivery = {
+    sendMessage: async () => { throw new Error('rate limited'); },
+    editMessage: async () => {},
+    deleteMessage: async () => {},
+    sendChatAction: async () => {},
+  };
+  const bridge = new OpenclawBridge({ delivery, config: BASE_CONFIG });
+  bridge.onAbort = () => { aborted++; };
+  bridge.beginTurn({ chatId: 'chat1' });
+  const sentByBridge = await bridge.abortCurrentTurn('🛑 已中止当前任务。');
+  assert(aborted === 1, '发送失败时 onAbort 仍被调用');
+  assert(sentByBridge === false, '发送失败时返回 false（宿主负责兜底回复）');
+  assert(bridge.currentTurn() === undefined, '发送失败时 turn 仍已清理');
 }
 
 // 4. abort 后 followUp 排队消息被 drain 处理（用户意图不丢）

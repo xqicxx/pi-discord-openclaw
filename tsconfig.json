@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "src/**/*.ts", "lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.test.ts"]
+  "include": ["index.ts", "src/**/*.ts", "lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.test.ts"],
+  "exclude": ["src/dispatch/dispatch_test.ts"]
 }

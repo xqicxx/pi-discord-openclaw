@@ -70,6 +70,8 @@ export interface CommandExecutionCtx {
   getModelName(): string | undefined;
   getThinkingLevel(): ThinkingLevel;
   getContextUsageText(): string | undefined;
+  /** 当前生效的系统提示（/context-simple 用；来自事件 ctx，而非 ExtensionAPI）。 */
+  getSystemPrompt(): string | undefined;
   listScopedModels(): string[];
   getAllTools(): string[];
   setSessionName(name: string): void;

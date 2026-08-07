@@ -11,7 +11,8 @@ export interface MountDeps {
   sendMessage: (text: string) => Promise<string>;
   editMessageText: (messageId: string, text: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
-  sendChatAction: (action: "typing") => Promise<void>;
+  /** typecheck 修复（issue #115）：与 DiscordDelivery.sendChatAction 签名对齐。 */
+  sendChatAction: (chatId: string, action: "typing") => Promise<void>;
 }
 
 /** activityRuntime 的最小接口（index.ts 传入）。 */
@@ -48,7 +49,7 @@ export function mountOpenclawBridge(
     sendMessage: deps.sendMessage,
     editMessage: deps.editMessageText,
     deleteMessage: deps.deleteMessage,
-    sendChatAction: deps.sendChatAction,
+    sendChatAction: (chatId, action) => deps.sendChatAction(chatId, action),
   };
   const styleConfig = loadOpenclawStyleConfig();
   const bridge = new OpenclawBridge({
