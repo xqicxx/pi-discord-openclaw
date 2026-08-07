@@ -1,5 +1,21 @@
 // 笔记 36：/resume 命令分支集成测试（列出 / 未找到 / 已在当前会话；不触发真实重启）。
+// 环境无关：不依赖真实 ~/.pi/agent/sessions（CI runner 无此目录导致测试失败），
+// 改用临时 HOME + 合成会话文件，确定性覆盖各分支。
 import { executeCommand } from '../src/commands/handler.ts';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tmpHome = mkdtempSync(join(tmpdir(), 'pi-resume-test-'));
+const sessionsDir = join(tmpHome, '.pi', 'agent', 'sessions', '--home-ubuntu--');
+mkdirSync(sessionsDir, { recursive: true });
+for (const [day, clock, id] of [
+  ['01', '01-02-03-004', '019fd56d-eaf1-7c73-8a6d-30e7c1bc8f9f'],
+  ['02', '04-05-06-007', '11111111-2222-3333-4444-555555555555'],
+]) {
+  writeFileSync(join(sessionsDir, `2026-08-${day}T${clock}Z_${id}.jsonl`), '');
+}
+process.env.HOME = tmpHome;
 
 let pass = 0, fail = 0;
 function assert(cond, label) {

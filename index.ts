@@ -131,6 +131,7 @@ function adaptCommandCtx(pi: ExtensionAPI, ctx: ExtensionContext): CommandExecut
       if (!usage) return undefined;
       return `${usage.tokens ?? "?"} / ${usage.contextWindow} tokens (${usage.percent ?? "?"}%)`;
     },
+    getSystemPrompt: () => ctx.getSystemPrompt(),
     listScopedModels: () => ctx.scopedModels.map((entry) => entry.model.id),
     getAllTools: () => pi.getAllTools().map((tool) => tool.name),
     setSessionName: (name) => pi.setSessionName(name),
@@ -267,15 +268,15 @@ export default function (pi: ExtensionAPI) {
   // 笔记 31：停机通知——正常重启（更新代码/systemctl restart）也发 Discord 消息，
   // 用户正在使用时不会「分不清 bot 是死了还是重启」。SIGHUP 也处理（tmux kill-server
   // 会给 pi 发 SIGHUP，只监听 SIGTERM 会漏）。尽力而为：3s 兜底强制退出。
-  // rest 在下方初始化，notifyShutdown 通过闭包引用；早退路径不会注册此处理器。
-  let rest: DiscordRest | undefined;
+  // 配置校验已在上方提前完成（issue #118），rest 直接 const 初始化——
+  // 闭包内 let 窄化失效导致 6 处 'rest possibly undefined'（issue #115 typecheck）。
+  const rest = new DiscordRest({ token: conn.token });
   const notifyShutdown = (): void => {
     try { rmSync(CRASH_MARK); } catch { /* 忽略 */ }
     const ch = (() => {
       try { return readFileSync(ACTIVE_CH_FILE, "utf8").trim() || undefined; } catch { return undefined; }
     })();
     if (!ch) { process.exit(0); return; }
-    if (!rest) { process.exit(0); return; }
     void rest
       .createChannelMessage(ch, { content: "🔄 服务重启中，约 15 秒后恢复…" })
       .catch(() => {})
@@ -286,7 +287,6 @@ export default function (pi: ExtensionAPI) {
   process.on("SIGHUP", () => notifyShutdown());
 
   const cfg: OpenclawStyleConfig = loadOpenclawStyleConfig();
-  rest = new DiscordRest({ token: conn.token });
   const gateway = new DiscordGateway({ token: conn.token, intents: DISCORD_INTENTS });
 
   // 当前活跃频道（最近收到用户消息的 channel_id；agent 回复发往该频道）
@@ -605,6 +605,15 @@ export default function (pi: ExtensionAPI) {
   let activeReactions: StatusReactionController | undefined;
   // 排队消息的 messageId 列表（按 channelId 分组），agent_start 时按合并后的 turn 创建 controller
   const queuedMessageIds: Array<{ channelId: string; messageId: string }> = [];
+  // 笔记 31：controller 工厂提到 messageCreate 回调外层——messageCreate 与 agent_start
+  // 共用；原定义在回调内导致 agent_start 引用报 TS2304 且运行时 ReferenceError（issue #115）。
+  const makeReactions = (target: { channelId: string; messageId: string }) =>
+    createStatusReactionController({
+      adapter: createDiscordReactionAdapter(rest, target.channelId, target.messageId),
+      enabled: cfg.statusReactions?.enabled ?? true,
+      emojis: cfg.statusReactions?.emojis,
+      timing: cfg.statusReactions?.timing,
+    });
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -637,12 +646,17 @@ export default function (pi: ExtensionAPI) {
     // 「停止/暂停/stop/abort」等 → 中断当前任务，不进 agent
     if (isAbortRequestText(content)) {
       void (async () => {
+        let confirmationSent = false;
         try {
-          await bridge.abortCurrentTurn("🛑 已中止当前任务。");
+          // issue #117：turn 活跃时 abortTurn 内部会向 turn 频道发送确认；
+          // 返回值标记是否已发送，宿主只兜底无活跃 turn 的场景，避免双发。
+          confirmationSent = await bridge.abortCurrentTurn("🛑 已中止当前任务。");
         } catch {
           // 忽略
         }
-        await replyTextCommand(channelId, "🛑 已中止当前任务。");
+        if (!confirmationSent) {
+          await replyTextCommand(channelId, "🛑 已中止当前任务。");
+        }
       })();
       return;
     }
@@ -685,13 +699,6 @@ export default function (pi: ExtensionAPI) {
     // 笔记 31：turn 活跃（bot 正在思考/操作）时收到的新消息 → 只建排队 controller（⏳=排队中），
     // 不进入状态机——否则全局 thinking/tool 事件会把 🧠/🛠️ 错挂到这条新消息上
     // （「没思考却有思考标签」根因），且旧消息的 controller 被覆盖后表情永久残留。
-    const makeReactions = (target: { channelId: string; messageId: string }) =>
-      createStatusReactionController({
-        adapter: createDiscordReactionAdapter(rest, target.channelId, target.messageId),
-        enabled: cfg.statusReactions?.enabled ?? true,
-        emojis: cfg.statusReactions?.emojis,
-        timing: cfg.statusReactions?.timing,
-      });
     // 笔记 31 修复：不再为每条消息创建排队 controller（debouncer 合并后 turn 数 < 消息数，
     // 导致多余 ⏳ 残留）。改为记录 messageId，agent_start 时按合并后的 turn 创建 controller。
     if (activeReactions && !activeReactions.isFinished()) {
@@ -942,6 +949,8 @@ export default function (pi: ExtensionAPI) {
       // 正常退出由 SIGTERM 钩子清理；崩溃（SIGKILL）残留 → 下次启动再提示
     })();
     if (applicationId) {
+      // 闭包捕获收窄：async 闭包内 let 窄化失效，先固化到 const（issue #115 typecheck）
+      const appId = applicationId;
       void (async () => {
         let builtins: ChatCommandDefinition[] = [];
         try {
@@ -1088,7 +1097,7 @@ export default function (pi: ExtensionAPI) {
                 return;
               }
             } catch { /* 无缓存文件 */ }
-            const existing = await rest.listApplicationCommands(applicationId);
+            const existing = await rest.listApplicationCommands(appId);
             const existingByName = new Map(existing.map((c) => [c.name, c]));
             const desiredNames = new Set(fullCommands.map((c) => c.name));
             let created = 0;
@@ -1100,10 +1109,10 @@ export default function (pi: ExtensionAPI) {
               for (;;) {
                 try {
                   if (!cur) {
-                    await rest.createApplicationCommand(applicationId, cmd);
+                    await rest.createApplicationCommand(appId, cmd);
                     created += 1;
-                  } else if (!commandsEqual(cur, cmd)) {
-                    await rest.editApplicationCommand(applicationId, cur.id, cmd);
+                  } else if (cur.id && !commandsEqual(cur, cmd)) {
+                    await rest.editApplicationCommand(appId, cur.id, cmd);
                     edited += 1;
                   }
                   break;
@@ -1133,15 +1142,17 @@ export default function (pi: ExtensionAPI) {
             let deleted = 0;
             for (const [name, c] of existingByName) {
               if (desiredNames.has(name)) continue;
-              try {
-                await rest.deleteApplicationCommand(applicationId, c.id);
-                deleted += 1;
-                console.log(`${TAG} 删除多余全局命令 /${name}`);
-              } catch (error) {
-                console.error(
-                  `${TAG} 删除多余全局命令 /${name} 失败：`,
-                  error instanceof Error ? error.message : String(error),
-                );
+              if (c.id) {
+                try {
+                  await rest.deleteApplicationCommand(appId, c.id);
+                  deleted += 1;
+                  console.log(`${TAG} 删除多余全局命令 /${name}`);
+                } catch (error) {
+                  console.error(
+                    `${TAG} 删除多余全局命令 /${name} 失败：`,
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
               }
             }
             console.log(
@@ -1171,8 +1182,8 @@ export default function (pi: ExtensionAPI) {
             for (const guild of guilds) {
               void registerCommandsForScope(
                 `guild ${guild.name ?? guild.id}`,
-                () => rest.registerGuildApplicationCommands(applicationId, guild.id, fullCommands),
-                () => rest.listGuildApplicationCommands(applicationId, guild.id),
+                () => rest.registerGuildApplicationCommands(appId, guild.id, fullCommands),
+                () => rest.listGuildApplicationCommands(appId, guild.id),
               );
             }
           } catch (error) {

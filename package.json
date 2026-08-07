@@ -38,6 +38,7 @@
   "files": [
     "index.ts",
     "src/",
+    "!src/dispatch/dispatch_test.ts",
     "README.md",
     "AGENTS.md",
     "BACKLOG.md",

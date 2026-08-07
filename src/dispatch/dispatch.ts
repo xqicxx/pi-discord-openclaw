@@ -377,10 +377,12 @@ export class OpenclawBridge {
     }
   }
 
-  /** 笔记 27：abort 当前 turn——清理状态 + 回复提示。 */
-  private async abortTurn(reason: string): Promise<void> {
+  /** 笔记 27：abort 当前 turn——清理状态 + 回复提示。
+   *  返回是否已向 turn 频道发送确认消息（无活跃 turn 或发送失败为 false，
+   *  宿主可据此兜底回复，避免与宿主双发/漏发）。 */
+  private async abortTurn(reason: string): Promise<boolean> {
     const turn = this.turn;
-    if (!turn) return;
+    if (!turn) return false;
     this.clearWatchdog();
     this.turn = undefined;
     // 笔记 28：真正中断 agent（宿主注入 ctx.abort()），否则任务还在后台跑
@@ -389,10 +391,12 @@ export class OpenclawBridge {
     } catch {
       // 忽略中断失败
     }
+    let sent = false;
     try {
       await this.delivery.sendMessage(turn.chatId, reason);
+      sent = true;
     } catch {
-      // 忽略发送失败
+      // 忽略发送失败（宿主可兜底回复）
     }
     // 清理 draft 状态（防止残留预览）
     try {
@@ -402,15 +406,14 @@ export class OpenclawBridge {
     }
     // 笔记 30：abort 后仍处理排队的新消息（用户意图不丢）
     await this.drainPending();
+    return sent;
   }
 
-  /** 笔记 28：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。
-   *  注意：本方法不保证发送确认消息——
-   *  - 有活跃 turn：abortTurn 内部向 turn.chatId 发送 reason；
-   *  - 无活跃 turn：本层无可信 chatId（debouncer key 可能是任意渠道），只调 onAbort
-   *    （宿主清表情 + 中断 agent）；确认回复由宿主（index.ts abort 拦截路径
-   *    replyTextCommand）负责，避免双发。 */
-  async abortCurrentTurn(reason = "已中止当前任务。"): Promise<void> {
+  /** 笔记 28/issue #117：用户显式中止（stop/暂停 等触发词）——中断当前 turn 并清理。
+   *  返回值：true = 本层已成功发送确认消息（turn 活跃时 abortTurn 内部发送）；
+   *          false = 未发送（无活跃 turn 或发送失败），由宿主负责确认回复，
+   *          避免宿主与 abortTurn 双发同一条确认。 */
+  async abortCurrentTurn(reason = "已中止当前任务。"): Promise<boolean> {
     if (!this.turn && this.debouncer) {
       // 无活动 turn 时仍走 abort（笔记 30：onAbort 清表情 + 中断 agent）。
       // 确认消息由 index.ts 的 abort 拦截路径发送（replyTextCommand），这里不重复发送。
@@ -419,9 +422,9 @@ export class OpenclawBridge {
       } catch {
         // 忽略
       }
-      return;
+      return false;
     }
-    await this.abortTurn(reason);
+    return await this.abortTurn(reason);
   }
 
   /** 连续工具超时检测：超过阈值强制 abort turn。 */
