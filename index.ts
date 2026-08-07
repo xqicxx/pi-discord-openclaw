@@ -658,7 +658,7 @@ export default function (pi: ExtensionAPI) {
         try {
           // issue #117：turn 活跃时 abortTurn 内部会向 turn 频道发送确认；
           // 返回值标记是否已发送，宿主只兜底无活跃 turn 的场景，避免双发。
-          confirmationSent = await bridge.abortCurrentTurn("🛑 已中止当前任务。");
+          confirmationSent = await bridge.abortCurrentTurn();n("🛑 已中止当前任务。");
         } catch {
           // 忽略
         }
