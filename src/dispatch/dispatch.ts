@@ -62,7 +62,7 @@ export interface OpenclawBridgeConfig {
 }
 
 export interface DiscordDelivery {
-  sendMessage: (chatId: string, text: string) => Promise<string>;
+  sendMessage: (chatId: string, text: string, embeds?: unknown[]) => Promise<string>;
   /** issue 59：编辑透传 embeds。 */
   editMessage: (chatId: string, messageId: string, text: string, embeds?: unknown[]) => Promise<void>;
   deleteMessage: (chatId: string, messageId: string) => Promise<void>;
@@ -97,7 +97,7 @@ export class TurnManager {
     this.turnId = `${params.chatId}:${params.messageId ?? this.startedAt}`;
 
     const transport: DraftTransport = {
-      sendMessage: (text) => params.delivery.sendMessage(params.chatId, text),
+      sendMessage: (text, embeds) => params.delivery.sendMessage(params.chatId, text, embeds),
       editMessage: (messageId, text, embeds) => params.delivery.editMessage(params.chatId, messageId, text, embeds),
       deleteMessage: (messageId) => params.delivery.deleteMessage(params.chatId, messageId),
       sendChatAction: (action) => params.delivery.sendChatAction(params.chatId, action),
