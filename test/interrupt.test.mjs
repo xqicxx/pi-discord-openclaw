@@ -91,7 +91,6 @@ function makeDelivery() {
   assert(aborted === 1, '发送失败时 onAbort 仍被调用');
   assert(sentByBridge === false, '发送失败时返回 false（宿主负责兜底回复）');
   assert(bridge.currentTurn() === undefined, '发送失败时 turn 仍已清理');
->>>>>>> origin/master
 }
 
 // 4. abort 后 followUp 排队消息被 drain 处理（用户意图不丢）
