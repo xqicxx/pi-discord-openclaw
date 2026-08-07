@@ -597,7 +597,8 @@ export default function (pi: ExtensionAPI) {
   //     每次收消息都重建 controller 导致的表情错位/残留 bug）
   //   agent_start 时 queued 队首升级为 active；终态（agent_end/abort/错误）必清理
   let activeReactions: StatusReactionController | undefined;
-  const queuedReactions: StatusReactionController[] = [];
+  // 排队消息的 messageId 列表（按 channelId 分组），agent_start 时按合并后的 turn 创建 controller
+  const queuedMessageIds: Array<{ channelId: string; messageId: string }> = [];
   gateway.events.on("messageCreate", (message) => {
     const channelId = message.channel_id;
     const content = message.content?.trim();
@@ -685,10 +686,10 @@ export default function (pi: ExtensionAPI) {
         emojis: cfg.statusReactions?.emojis,
         timing: cfg.statusReactions?.timing,
       });
+    // 笔记 31 修复：不再为每条消息创建排队 controller（debouncer 合并后 turn 数 < 消息数，
+    // 导致多余 ⏳ 残留）。改为记录 messageId，agent_start 时按合并后的 turn 创建 controller。
     if (activeReactions && !activeReactions.isFinished()) {
-      const queued = makeReactions({ channelId, messageId: message.id });
-      queued.setQueued();
-      queuedReactions.push(queued);
+      queuedMessageIds.push({ channelId, messageId: message.id });
     } else {
       activeReactions = makeReactions({ channelId, messageId: message.id });
       void activeReactions?.setQueued();
@@ -783,12 +784,14 @@ export default function (pi: ExtensionAPI) {
     // 直接查 map 恒 miss → 回退 lastActiveChannelId（真实频道 id）
     const chatId = lastActiveChannelId ?? "default";
     bridge.beginTurn({ chatId });
-    // 笔记 31：排队消息升级为 active（drain 后开始被处理）——队首消息从 ⏳ 变 👀；
-    // 旧 active 正常路径已 finished/清理，这里兜底 clear（异常路径防残留）
-    if (queuedReactions.length > 0) {
-      const next = queuedReactions.shift()!;
+    // 笔记 31 修复：排队消息升级为 active——从 queuedMessageIds 取队首（对应合并后的 turn），
+    // 创建 controller 并标 ⏳→👀；旧 active 正常路径已 finished/清理，这里兜底 clear。
+    if (queuedMessageIds.length > 0) {
+      const nextTarget = queuedMessageIds.shift()!;
+      const next = makeReactions(nextTarget);
       void activeReactions?.clear().catch(() => {});
       activeReactions = next;
+      void activeReactions?.setQueued();
     }
     // 笔记 30：处理中 👀（与排队 ⏳ 区分）
     void activeReactions?.setWorking();
